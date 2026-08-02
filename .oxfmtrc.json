@@ -1,0 +1,20 @@
+{
+  "semi": true,
+  "tabWidth": 2,
+  "printWidth": 80,
+  "endOfLine": "lf",
+  "singleQuote": true,
+  "trailingComma": "all",
+  "bracketSpacing": true,
+  "arrowParens": "always",
+  "useTabs": false,
+  "ignore": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "data",
+    ".tmp",
+    "bun.lock",
+    "src/infra/db/migrations"
+  ]
+}

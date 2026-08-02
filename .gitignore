@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/*
+!coverage/.gitkeep
+data/
+.tmp/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+.DS_Store
+openapi.json

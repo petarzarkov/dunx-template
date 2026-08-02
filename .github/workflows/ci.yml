@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run lint:check
+      - run: bun run format:check
+      - run: bun run typecheck
+      - run: bun run build
+      - run: bun run test:cov
+
+      - name: Boot the app and probe it
+        env:
+          API_PORT: 3001
+          SQLITE_DB_PATH: ./.tmp/ci.db
+        run: |
+          bun src/main.ts &
+          pid=$!
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3001/api/service/up > /dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3001/api/service/health | tee /dev/stderr | grep -q '"status":"ok"'
+          curl -fsS http://127.0.0.1:3001/api/openapi.json > /dev/null
+          kill "$pid"
+
+      - name: End-to-end suite against a live server
+        run: bun run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t dunx-template:ci .
+      - name: Boot the container and probe it
+        run: |
+          docker run -d --name dunx-template-ci -p 3001:3001 dunx-template:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3001/api/service/up > /dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3001/api/service/health | grep -q '"status":"ok"'
+          docker logs dunx-template-ci
+          docker rm -f dunx-template-ci

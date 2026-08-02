@@ -1,0 +1,17 @@
+# Deny-list, not an allow-list, so bunfig.toml cannot be dropped by accident.
+# `bun src/main.ts` needs it: without the preload, dependency injection fails at
+# boot and the error will point at bunfig.toml from inside the container.
+node_modules
+dist
+coverage
+data
+.tmp
+.git
+.github
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+README.md
+MAPPING.md

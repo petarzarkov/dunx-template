@@ -1,0 +1,50 @@
+{
+  "name": "dunx-template",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A production-shaped starter for dunx: validated config, structured logging, SQLite via drizzle, cursor pagination, OpenAPI, Docker and CI.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "start": "bun src/main.ts",
+    "start:dist": "bun dist/main.js",
+    "build": "bun ./scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --fix src scripts e2e",
+    "lint:check": "oxlint src scripts e2e",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "test": "bun test",
+    "test:unit": "bun test .test.ts",
+    "test:int": "bun test .spec.ts",
+    "test:cov": "bun test --coverage",
+    "test:e2e": "bun test --env-file=./e2e/.env --preload ./e2e/setup/preload.ts $(find ./e2e -name '*.e2e.ts')",
+    "mig:gen": "bun --env-file=.env drizzle-kit generate",
+    "mig:run": "bun --env-file=.env ./scripts/migrate.ts",
+    "db:studio": "bun --env-file=.env drizzle-kit studio",
+    "db:drop": "bun ./scripts/db-drop.ts",
+    "seed": "bun --env-file=.env ./scripts/seed.ts",
+    "gen:openapi": "bun ./scripts/gen-openapi.ts"
+  },
+  "dependencies": {
+    "@dunx/core": "^0.1.0",
+    "@dunx/http": "^0.1.0",
+    "@dunx/infra": "^0.1.0",
+    "@dunx/openapi": "^0.1.0",
+    "@dunx/transform": "^0.1.0",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@dunx/testing": "^0.1.0",
+    "@types/bun": "^1.3.14",
+    "drizzle-kit": "^0.31.10",
+    "oxfmt": "^0.61.0",
+    "oxlint": "^1.76.0",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}

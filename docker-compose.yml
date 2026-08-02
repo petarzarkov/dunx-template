@@ -1,0 +1,31 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+        COMMIT_MESSAGE: ${COMMIT_MESSAGE:-local build}
+    container_name: dunx-template
+    restart: unless-stopped
+    ports:
+      - '${API_PORT:-3001}:3001'
+    environment:
+      API_PORT: 3001
+      APP_ENV: ${APP_ENV:-local}
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SQLITE_DB_PATH: /app/data/app.db
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      TRUST_PROXY: 'true'
+    volumes:
+      - app-data:/app/data
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:3001/api/service/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  app-data:
