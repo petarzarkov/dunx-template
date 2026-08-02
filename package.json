@@ -26,7 +26,7 @@
     "db:studio": "bun --env-file=.env drizzle-kit studio",
     "db:drop": "bun ./scripts/db-drop.ts",
     "seed": "bun --env-file=.env ./scripts/seed.ts",
-    "gen:openapi": "bun ./scripts/gen-openapi.ts"
+    "gen:openapi": "bunx dunx-openapi ./src/openapi.config.ts"
   },
   "dependencies": {
     "@dunx/auth": "^0.2.5",
