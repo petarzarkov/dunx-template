@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { PubSub } from '@dunx/http';
 import { createTestServer, type TestServer } from '@dunx/testing';
 import { appModule } from '../../app.module.js';
 import { validateConfig } from '../../config/env.validation.js';
@@ -27,6 +28,9 @@ const source = {
   THROTTLE_LIMIT: '10000',
   SEED_ADMIN_EMAIL: 'admin@local.dev',
   SEED_ADMIN_PASSWORD: 'admin-password',
+  // A private channel, shared by both nodes below and by nothing else: two apps
+  // on one Redis need two of these, or each fans out the other's frames.
+  WS_RELAY_CHANNEL: `test-relay-${crypto.randomUUID()}`,
 };
 
 interface Frame {
@@ -197,4 +201,82 @@ describe('messages and fan-out', () => {
     expect((await heard).data).toMatchObject({ event: 'test', n: 1 });
     socket.close();
   });
+});
+
+/**
+ * Two nodes, in one process. Two `Bun.serve` instances, two containers, two
+ * `PubSub`s with two different origin ids - everything a second deployment has
+ * except a second pid, which the relay cannot tell apart anyway.
+ *
+ * This is the assertion the whole `RedisRelay` exists for, and it is the one thing
+ * a single-node suite cannot prove: a frame published on A has to reach a socket
+ * on B. Skipped with no broker, which is also the degraded contract - fan-out
+ * stays local and nothing fails.
+ */
+describe('fan-out across nodes', () => {
+  let nodeB: TestServer | undefined;
+  let tokenB = '';
+  let live = false;
+
+  beforeAll(async () => {
+    const probe = new Bun.RedisClient(undefined, {
+      connectionTimeout: 500,
+      maxRetries: 0,
+    });
+    try {
+      await probe.ping();
+      live = true;
+    } catch {
+      live = false;
+    } finally {
+      probe.close();
+    }
+    if (!live) return;
+
+    // The same `source`, so the same `WS_RELAY_CHANNEL` - which is the only thing
+    // the two nodes have to agree on. Each gets its own `RedisRelay` from
+    // `httpOptions`, its own container and its own `Bun.serve`.
+    nodeB = await createTestServer({
+      modules: [appModule({ source, logLevel: 'fatal' })],
+      prefix: 'api',
+      ...httpOptions(validateConfig(source)),
+      requestLogging: false,
+    });
+    tokenB = await signIn(nodeB, 'admin@local.dev', 'admin-password');
+  });
+
+  afterAll(async () => {
+    await nodeB?.close();
+  });
+
+  test('a frame published on one node reaches a socket on the other', async () => {
+    if (!live || nodeB === undefined) return;
+
+    // Both are already relaying: `HttpOptions.relay` installed a `RedisRelay`
+    // on each, and calling `relayThrough` as well is an `AppError` rather than a
+    // silent double subscription.
+    expect(server.app.get(PubSub).relaying).toBe(true);
+    expect(nodeB.app.get(PubSub).relaying).toBe(true);
+
+    const base = nodeB.url.replace(/^http/, 'ws').replace(/\/$/, '');
+    const socketOnB = await new Promise<WebSocket>((resolve, reject) => {
+      const ws = new WebSocket(`${base}/ws`, {
+        headers: { authorization: `Bearer ${tokenB}` },
+      });
+      ws.addEventListener('open', () => resolve(ws), { once: true });
+      ws.addEventListener('error', () => reject(new Error('refused')), {
+        once: true,
+      });
+    });
+    await nextFrame(socketOnB, EVENTS.CONNECTED);
+
+    const heard = nextFrame(socketOnB, EVENTS.NOTIFICATION, 8000);
+    server.app
+      .get(EventsPublisher)
+      .publish(TOPICS.ADMINS, EVENTS.NOTIFICATION, { event: 'crossed' });
+
+    expect((await heard).data).toMatchObject({ event: 'crossed' });
+
+    socketOnB.close();
+  }, 20_000);
 });
