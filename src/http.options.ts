@@ -1,7 +1,7 @@
 import { SessionGuard } from '@dunx/auth';
 import { RedisRelay, type HttpOptions } from '@dunx/http';
 import { SERVICE_ROUTES } from './constants.js';
-import type { AppConfig } from './config/app.config.js';
+import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
 import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';

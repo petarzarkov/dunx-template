@@ -1,5 +1,5 @@
 import { ConfigService } from '@dunx/core';
-import type { AppConfig } from './app.config.js';
+import type { AppConfig } from './env.validation.js';
 
 /**
  * The subclass exists so `inject: [AppConfigService]` keeps the type. Without

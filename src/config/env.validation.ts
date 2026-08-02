@@ -4,7 +4,7 @@ import { DEV_AUTH_SECRET } from './dto/auth-vars.dto.js';
 import { DbType } from './dto/db-vars.dto.js';
 import { StorageDriver } from './dto/storage-vars.dto.js';
 import { envVarsSchema } from './env-vars.dto.js';
-import type { AppConfig, OAuthCredentials } from './app.config.js';
+import type { OAuthCredentials } from './app.config.js';
 import pkg from '../../package.json' with { type: 'json' };
 
 /** Both halves or nothing: a provider with one of the two is a misconfiguration. */
@@ -21,7 +21,7 @@ const oauth = (
  * environment and returns the nested, typed tree the app reads, so nothing
  * downstream ever touches `process.env` or a raw string again.
  */
-export const validateConfig = (env: ConfigSource): AppConfig => {
+export const validateConfig = (env: ConfigSource) => {
   const parsed = envVarsSchema.safeParse(env);
 
   if (!parsed.success) {
@@ -133,3 +133,23 @@ export const validateConfig = (env: ConfigSource): AppConfig => {
 };
 
 export { DbType, StorageDriver };
+
+/**
+ * Deep-readonly so the derived type keeps the guarantee the hand-written interface
+ * gave, without restating a single field. Inference alone would widen every
+ * property to mutable.
+ */
+type DeepReadonly<T> = T extends readonly (infer E)[]
+  ? readonly DeepReadonly<E>[]
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+
+/**
+ * The shape the app reads, taken from the function that produces it.
+ *
+ * `ReturnType`, not a declaration: the validator already describes every field,
+ * and a second description is one that drifts. Adding a field to the returned
+ * object is the only edit a new setting needs.
+ */
+export type AppConfig = DeepReadonly<ReturnType<typeof validateConfig>>;

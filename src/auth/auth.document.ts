@@ -1,6 +1,6 @@
 import { betterAuthDocument } from '@dunx/auth';
 import { betterAuth } from 'better-auth';
-import type { AppConfig } from '../config/app.config.js';
+import type { AppConfig } from '../config/env.validation.js';
 import { AUTH_MOUNT, baseAuthOptions } from './auth.options.js';
 
 /**

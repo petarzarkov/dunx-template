@@ -1,7 +1,7 @@
 import { bunPassword } from '@dunx/auth';
 import type { BetterAuthOptions } from 'better-auth';
 import { admin, bearer, openAPI } from 'better-auth/plugins';
-import type { AppConfig } from '../config/app.config.js';
+import type { AppConfig } from '../config/env.validation.js';
 
 /**
  * The route path `AuthHandler` is mounted at, before the global prefix is
