@@ -20,7 +20,28 @@ let server: Subprocess | undefined;
 let context: TestContext | undefined;
 
 /**
- * `e2e/.env`, parsed here rather than inherited.
+ * What the e2e server needs to boot, as code.
+ *
+ * These are test fixtures, not secrets, and they used to live only in `e2e/.env` -
+ * which `.gitignore` matches with its `.env` rule, so the file existed on every
+ * developer machine and in no CI run. The suite passed locally and failed on the
+ * runner with `API_PORT: expected number, received NaN`, because the server booted
+ * with no configuration at all.
+ *
+ * A committed default is the fix: the suite now works from a clean clone with no
+ * env file present, and `e2e/.env` still overrides when someone wants it to.
+ */
+const DEFAULTS: Record<string, string> = {
+  API_PORT: '3999',
+  APP_ENV: 'local',
+  NODE_ENV: 'test',
+  LOG_LEVEL: 'fatal',
+  SQLITE_DB_PATH: './.tmp/e2e.db',
+  E2E_API_URL: 'http://127.0.0.1:3999/api',
+};
+
+/**
+ * `e2e/.env`, parsed here rather than inherited, and optional.
  *
  * `bun test --env-file` loads it into the **test** process, and the server is a
  * child of that process, so it only sees these values if they were exported. It
@@ -47,7 +68,7 @@ const e2eEnv = (): Record<string, string> => {
   return out;
 };
 
-const ENV = e2eEnv();
+const ENV = { ...DEFAULTS, ...e2eEnv() };
 
 const DB_PATH =
   Bun.env['SQLITE_DB_PATH'] ?? ENV['SQLITE_DB_PATH'] ?? './.tmp/e2e.db';

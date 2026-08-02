@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "bun --watch src/main.ts",
     "start": "bun src/main.ts",
+    "worker": "bun src/worker.ts",
     "start:dist": "bun dist/main.js",
     "build": "bun ./scripts/build.ts",
     "typecheck": "tsc --noEmit",
@@ -19,7 +20,7 @@
     "test:unit": "bun test .test.ts",
     "test:int": "bun test .spec.ts",
     "test:cov": "bun test --coverage",
-    "test:e2e": "bun test --env-file=./e2e/.env --preload ./e2e/setup/preload.ts $(find ./e2e -name '*.e2e.ts')",
+    "test:e2e": "bun test --preload ./e2e/setup/preload.ts $(find ./e2e -name '*.e2e.ts')",
     "mig:gen": "bun --env-file=.env drizzle-kit generate",
     "mig:run": "bun --env-file=.env ./scripts/migrate.ts",
     "db:studio": "bun --env-file=.env drizzle-kit studio",
@@ -28,12 +29,16 @@
     "gen:openapi": "bun ./scripts/gen-openapi.ts"
   },
   "dependencies": {
+    "@dunx/auth": "^0.2.0",
     "@dunx/core": "^0.2.0",
     "@dunx/http": "^0.2.0",
     "@dunx/infra": "^0.2.0",
     "@dunx/openapi": "^0.2.0",
     "@dunx/transform": "^0.2.0",
+    "better-auth": "^1.6.25",
+    "bullmq": "^6.0.5",
     "drizzle-orm": "^0.45.2",
+    "ioredis": "^6.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
