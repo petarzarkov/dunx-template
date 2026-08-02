@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import type { Subprocess } from 'bun';
 import { ApiClient } from '../utils/api-client.js';
@@ -18,8 +19,40 @@ export interface TestContext {
 let server: Subprocess | undefined;
 let context: TestContext | undefined;
 
-const DB_PATH = Bun.env['SQLITE_DB_PATH'] ?? './.tmp/e2e.db';
-const API_URL = Bun.env['E2E_API_URL'] ?? 'http://127.0.0.1:3999/api';
+/**
+ * `e2e/.env`, parsed here rather than inherited.
+ *
+ * `bun test --env-file` loads it into the **test** process, and the server is a
+ * child of that process, so it only sees these values if they were exported. It
+ * worked locally by accident: Bun auto-loads a root `.env`, which is gitignored,
+ * so CI had none and the server booted with `API_PORT` undefined and died on
+ * `expected number, received NaN`.
+ */
+const e2eEnv = (): Record<string, string> => {
+  const file = new URL('../.env', import.meta.url).pathname;
+  const out: Record<string, string> = {};
+  let text = '';
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return out;
+  }
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    out[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+  }
+  return out;
+};
+
+const ENV = e2eEnv();
+
+const DB_PATH =
+  Bun.env['SQLITE_DB_PATH'] ?? ENV['SQLITE_DB_PATH'] ?? './.tmp/e2e.db';
+const API_URL =
+  Bun.env['E2E_API_URL'] ?? ENV['E2E_API_URL'] ?? 'http://127.0.0.1:3999/api';
 
 const waitForReady = async (
   url: string,
@@ -70,7 +103,11 @@ export const initializeTestContext = async (): Promise<TestContext> => {
 
   server = Bun.spawn(['bun', 'src/main.ts'], {
     cwd: new URL('../..', import.meta.url).pathname,
-    env: { ...process.env, SQLITE_DB_PATH: DB_PATH },
+    // `e2e/.env` wins over the ambient environment, deliberately. Bun auto-loads a
+    // root `.env` into this process, and if that set API_PORT the server would
+    // listen somewhere the suite is not polling - which is the same class of bug
+    // as the one this parsing fixes.
+    env: { ...process.env, ...ENV, SQLITE_DB_PATH: DB_PATH },
     stdout: 'pipe',
     stderr: 'pipe',
   });
