@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { blank, csv } from './scalars.js';
 
 export const AppEnv = Object.freeze({
   LOCAL: 'local',
@@ -27,26 +28,6 @@ export const logLevels = [
   'error',
   'fatal',
 ] as const;
-
-const csv = (fallback: readonly string[]) =>
-  z
-    .string()
-    .optional()
-    .transform((value) =>
-      value === undefined || value.trim() === ''
-        ? [...fallback]
-        : value
-            .split(',')
-            .map((part) => part.trim())
-            .filter((part) => part.length > 0),
-    );
-
-const blank = z
-  .string()
-  .optional()
-  .transform((value) =>
-    value === undefined || value === '' ? undefined : value,
-  );
 
 export const serviceVarsSchema = z.object({
   APP_ENV: z

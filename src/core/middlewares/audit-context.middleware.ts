@@ -1,13 +1,20 @@
-import { RequestContext } from '@dunx/core';
 import type { Middleware, Next, RouteContext } from '@dunx/http';
 import type { BunRequest } from 'bun';
+import { CurrentUser } from '../../auth/services/current-user.service.js';
 import { DatabaseBootstrap } from '../../infra/db/database.module.js';
 import { setAuditActor } from '../../infra/db/triggers.js';
 
 /**
  * Stamps the acting user into the single-row `_audit_ctx` table so the database
- * triggers can attribute the rows they write, and mirrors it into the async
- * request context so every log line in the request carries `userId`.
+ * triggers can attribute the rows they write.
+ *
+ * The actor is the authenticated caller, read out of `AuthContext` - which is why
+ * this runs **after** `SessionGuard`, whose `context.run(principal, next)` is what
+ * opened the scope. It used to be an `x-actor-id` header, a stand-in for exactly
+ * this that trusted whatever the client sent.
+ *
+ * `SessionGuard` also writes `userId` into `RequestContext`, so every log line in
+ * the request is correlated without this doing anything.
  *
  * NestJS did this in an `APP_INTERCEPTOR`. dunx has one extension point, so an
  * interceptor and a middleware are the same thing: work before `next()`, work
@@ -20,13 +27,11 @@ import { setAuditActor } from '../../infra/db/triggers.js';
 export class AuditContextMiddleware implements Middleware {
   constructor(
     private readonly database: DatabaseBootstrap,
-    private readonly context: RequestContext,
+    private readonly caller: CurrentUser,
   ) {}
 
-  handle(req: BunRequest, _ctx: RouteContext, next: Next): Promise<Response> {
-    const actorId = req.headers.get('x-actor-id');
-    setAuditActor(this.database.raw, actorId);
-    if (actorId !== null) this.context.updateContext({ userId: actorId });
+  handle(_req: BunRequest, _ctx: RouteContext, next: Next): Promise<Response> {
+    setAuditActor(this.database.raw, this.caller.optional()?.id ?? null);
     return next();
   }
 }

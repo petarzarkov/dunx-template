@@ -13,4 +13,9 @@ export const SERVICE_ROUTES = Object.freeze({
   CONFIG: 'config',
 } as const);
 
-export const ACTOR_HEADER = 'x-actor-id';
+/**
+ * Where `@dunx/auth`'s handler is mounted, relative to the global prefix, and the
+ * websocket upgrade path. Both are route paths, so both are decided at
+ * class-definition time and neither can come from the environment.
+ */
+export const WS_PATH = '/ws';

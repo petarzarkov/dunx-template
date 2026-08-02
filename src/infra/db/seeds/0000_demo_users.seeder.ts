@@ -9,16 +9,21 @@ import * as schema from '../schema.js';
  *
  * `when` is the environment gate. A seed refused by its own predicate is not
  * journaled, so it still runs the first time it is invoked somewhere it belongs.
+ *
+ * **These users cannot sign in, on purpose.** A row inserted here has no `account`
+ * row and therefore no password hash - it is a directory entry, useful for paging
+ * and audit demos and nothing else. The first administrator is created through
+ * better-auth by `AuthAdminSeeder`, which is the only path that produces a
+ * credential.
  */
 export const when = (env: string): boolean => env !== 'production';
 
 export function seed(db: BunSQLiteDatabase<typeof schema>): void {
   db.insert(users)
-    .values({
-      email: Bun.env['SEED_ADMIN_EMAIL'] ?? 'admin@local.dev',
-      name: 'Admin',
-      role: 'admin',
-    })
+    .values([
+      { email: 'ada@example.com', name: 'Ada Lovelace' },
+      { email: 'grace@example.com', name: 'Grace Hopper' },
+    ])
     .onConflictDoNothing()
     .run();
 }

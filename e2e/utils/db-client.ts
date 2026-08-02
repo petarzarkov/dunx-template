@@ -11,15 +11,25 @@ export class DbClient {
     this.#db = new Database(path, { strict: true });
   }
 
-  ensureAdmin(email: string): string {
-    this.#db.run('DELETE FROM user WHERE email = ?', [email]);
-    const id = crypto.randomUUID();
-    const now = Date.now();
-    this.#db.run(
-      'INSERT INTO user (id, email, name, role, banned, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)',
-      [id, email, 'E2E Admin', 'admin', now, now],
-    );
-    return id;
+  /**
+   * The id of a user the **application** created. Nothing here inserts one any
+   * more: a row written straight into `user` has no `account` row and therefore no
+   * password hash, so it could never sign in. The first administrator comes from
+   * `AuthAdminSeeder`, through better-auth's own sign-up.
+   */
+  idFor(email: string): string {
+    const row = this.#db
+      .query('SELECT id FROM user WHERE email = ?')
+      .get(email) as { id: string } | null;
+    if (row === null) throw new Error(`no user row for ${email}`);
+    return row.id;
+  }
+
+  countRows(table: 'session' | 'account' | 'file'): number {
+    const row = this.#db
+      .query(`SELECT count(*) AS n FROM "${table}"`)
+      .get() as { n: number } | null;
+    return row?.n ?? 0;
   }
 
   countAuditRows(entityId: string): number {

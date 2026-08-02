@@ -2,9 +2,12 @@ import { Logger } from '@dunx/core';
 import { HttpFactory } from '@dunx/http';
 import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
 import { appModule } from './app.module.js';
+import { authDocument } from './auth/auth.document.js';
+import { AUTH_MOUNT } from './auth/auth.options.js';
 import { AppConfigService } from './config/app.config.service.js';
 import { validateConfig } from './config/env.validation.js';
 import { httpOptions } from './http.options.js';
+import { forceExitAfter } from './core/force-exit.js';
 import { SERVICE_ROUTES } from './constants.js';
 
 /**
@@ -34,6 +37,11 @@ const app = await HttpFactory.create(
     root: appModule(),
     path: `/${boot.docs.path}`,
     jsonPath: `/${boot.docs.jsonPath}`,
+    // Better Auth serves every one of its endpoints from one wildcard route, so
+    // route discovery sees none of them. This asks the library for its own schema
+    // and merges it in - a declared route wins a collision, and a missing
+    // `openAPI()` plugin costs documentation rather than the boot.
+    contribute: [authDocument(boot)],
   }),
   httpOptions(boot),
 );
@@ -48,9 +56,16 @@ app.setGlobalPrefix(appConfig.prefix);
 app.set('trust proxy', cors.trustProxy);
 app.enableCors({ origin: cors.origin, credentials: config.get('isProd') });
 app.enableShutdownHooks();
+const cancelWatchdog = forceExitAfter();
 
 const { warnings } = app.get(OpenApiExplorer);
 if (warnings.length > 0) logger.warn('openapi schema warnings', { warnings });
+
+if (config.get('auth').usingDevSecret) {
+  logger.warn(
+    'BETTER_AUTH_SECRET is unset, using the development constant. Sessions are forgeable by anyone with this repository.',
+  );
+}
 
 const url = await app.listen(appConfig.port);
 
@@ -60,8 +75,17 @@ logger.info(`${appConfig.name} listening`, {
   docs: `${url}${appConfig.prefix}/${boot.docs.path}`,
   openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
   health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
+  auth: `${url}${appConfig.prefix}${AUTH_MOUNT}`,
+  websocket: app.gatewayPaths.map(
+    (path) => `${url.replace('http', 'ws').replace(/\/$/, '')}${path}`,
+  ),
   timezone: appConfig.timezone,
   versions: { bun: Bun.version, node: process.versions.node },
 });
 
 await app.closed;
+
+// Every shutdown hook has run, so leaving is correct - and explicit, because a
+// connection that never opened can still be holding the loop. See force-exit.ts.
+cancelWatchdog();
+process.exit(0);

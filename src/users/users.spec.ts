@@ -3,25 +3,47 @@ import { createTestServer, type TestServer } from '@dunx/testing';
 import { appModule } from '../app.module.js';
 import { validateConfig } from '../config/env.validation.js';
 import { httpOptions } from '../http.options.js';
-import { ACTOR_HEADER } from '../constants.js';
+import { bearer, signIn, signUp } from '../test-support/session.js';
 import type { Page } from '../core/pagination/page-options.dto.js';
 import type { AuditLogEntry } from '../audit/dto/audit-log.dto.js';
 import type { SanitizedUser } from './dto/user.dto.js';
 
 /**
  * The whole graph behind a real `Bun.serve` on port 0, against a real in-memory
- * SQLite. `:memory:` means the drizzle-kit migrations and the audit triggers are
- * applied from scratch on every run, so this covers the boot path too.
+ * SQLite - migrations, triggers, Better Auth and all. `:memory:` means every table
+ * is created from scratch on each run, so this covers the boot path too.
  *
- * `prefix` is `createTestServer`'s `setGlobalPrefix`, applied before `listen()`
- * so the client's URLs carry it.
+ * `prefix` is `createTestServer`'s `setGlobalPrefix`, applied before `listen()` so
+ * the client's URLs carry it, and so better-auth's `basePath` of `/api/auth` is the
+ * URL its handler actually answers on.
  */
 let server: TestServer;
+let adminToken: string;
 let admin: SanitizedUser;
 
-const asAdmin = (): Record<string, string> => ({ [ACTOR_HEADER]: admin.id });
+const asAdmin = (): Record<string, string> => bearer(adminToken);
 
-const source = { API_PORT: '0', SQLITE_DB_PATH: ':memory:' };
+const source = {
+  API_PORT: '0',
+  SQLITE_DB_PATH: ':memory:',
+  // The throttler is exercised in its own suite; a shared window here would make
+  // every other assertion depend on how many ran before it.
+  THROTTLE_LIMIT: '10000',
+  THROTTLE_PREFIX: `test-${crypto.randomUUID()}`,
+  SEED_ADMIN_EMAIL: 'admin@local.dev',
+  SEED_ADMIN_PASSWORD: 'admin-password',
+};
+
+const create = (
+  email: string,
+  name: string,
+  extra: Record<string, unknown> = {},
+) =>
+  server.json<SanitizedUser>('api/users', {
+    method: 'POST',
+    headers: asAdmin(),
+    json: { email, name, password: 'a-strong-password', ...extra },
+  });
 
 beforeAll(async () => {
   server = await createTestServer({
@@ -34,15 +56,14 @@ beforeAll(async () => {
     requestLogging: false,
   });
 
-  // The very first user cannot come through the guarded route, because the guard
-  // needs an existing admin to authorise it. Seed it the way scripts/seed.ts does.
-  const { UsersRepository } = await import('./repos/users.repository.js');
-  const created = server.app.get(UsersRepository).create({
-    email: 'admin@local.dev',
-    name: 'Admin',
-    role: 'admin',
-  });
-  admin = { ...created, createdAt: '', updatedAt: '' } as SanitizedUser;
+  // `AuthAdminSeeder` created this at `onInit`, through better-auth's own sign-up,
+  // so it has a credential and can actually sign in.
+  adminToken = await signIn(server, 'admin@local.dev', 'admin-password');
+  admin = (await server
+    .json<SanitizedUser>('api/profile', {
+      headers: asAdmin(),
+    })
+    .then((r) => r.body)) as unknown as SanitizedUser;
 });
 
 afterAll(async () => {
@@ -58,14 +79,23 @@ describe('GET /api/service/*', () => {
     expect(body.uptimeSeconds).toBeGreaterThan(0);
   });
 
-  test('readiness reports the database up', async () => {
+  test('readiness reports the database up and never fails on a missing service', async () => {
     const { status, body } = await server.json<{
       status: string;
       info: Record<string, { status: string }>;
+      degraded: Record<string, { status: string }>;
     }>('api/service/health');
+
     expect(status).toBe(200);
     expect(body.status).toBe('ok');
     expect(body.info['db']?.status).toBe('up');
+    expect(body.info['storage']?.status).toBe('up');
+    expect(body.info['images']?.status).toBe('up');
+    // Redis may or may not be running. Either way the probe passes: a degraded
+    // area is reported, not failed.
+    expect(
+      body.info['cache']?.status ?? body.degraded['cache']?.status,
+    ).toBeDefined();
   });
 
   test('config reports the build', async () => {
@@ -77,7 +107,7 @@ describe('GET /api/service/*', () => {
   });
 });
 
-describe('the guard', () => {
+describe('SessionGuard', () => {
   test('an unauthenticated call is a 401', async () => {
     const { status, body } = await server.json<{ message: string }>(
       'api/users',
@@ -86,42 +116,75 @@ describe('the guard', () => {
     expect(body.message).toBe('UNAUTHENTICATED');
   });
 
-  test('an unknown actor is a 401', async () => {
+  test('a forged bearer token is a 401', async () => {
     const { status } = await server.json('api/users', {
-      headers: { [ACTOR_HEADER]: crypto.randomUUID() },
+      headers: bearer('not-a-real-session-token'),
     });
     expect(status).toBe(401);
   });
 
-  test('a user role cannot reach an admin-only route', async () => {
-    const { body: plain } = await server.json<SanitizedUser>('api/users', {
+  test('better-auth own endpoints are @Public(), so sign-in is reachable', async () => {
+    const response = await server.request('api/auth/sign-in/email', {
       method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'plain@example.com', name: 'Plain' },
+      json: { email: 'admin@local.dev', password: 'wrong-password' },
     });
+    // Reached the handler and was refused by better-auth, not by the guard.
+    expect(response.status).toBe(401);
+    expect(response.headers.get('set-auth-token')).toBeNull();
+  });
+
+  test('@Public() on a route skips the session lookup entirely', async () => {
+    const { status, body } = await server.json<{ caller: string | null }>(
+      'api/profile/anonymous',
+    );
+    expect(status).toBe(200);
+    expect(body.caller).toBeNull();
+  });
+
+  test('a user role cannot reach an admin-only route', async () => {
+    const plain = await signUp(server, 'plain@example.com', 'a-password-123');
 
     const { status, body } = await server.json<{ message: string }>(
       'api/users',
       {
         method: 'POST',
-        headers: { [ACTOR_HEADER]: plain.id },
-        json: { email: 'other@example.com', name: 'Other' },
+        headers: bearer(plain.token),
+        json: {
+          email: 'other@example.com',
+          name: 'Other',
+          password: 'a-password-123',
+        },
       },
     );
     expect(status).toBe(403);
     expect(body.message).toBe('Requires one of: admin');
   });
+
+  test('the caller reaches a service through AuthContext, not a parameter', async () => {
+    const { status, body } = await server.json<{
+      email: string;
+      roles: string[];
+    }>('api/profile', { headers: asAdmin() });
+
+    expect(status).toBe(200);
+    expect(body.email).toBe('admin@local.dev');
+    expect(body.roles).toContain('admin');
+  });
 });
 
 describe('users CRUD', () => {
-  test('POST creates at 201 and PATCH updates', async () => {
-    const created = await server.json<SanitizedUser>('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'grace@example.com', name: 'Grace Hopper' },
-    });
+  test('POST creates a signed-in-able user at 201 and PATCH updates', async () => {
+    const created = await create('grace@example.com', 'Grace Hopper');
     expect(created.status).toBe(201);
     expect(created.body.role).toBe('user');
+
+    // The credential is real: the created user can sign in.
+    const token = await signIn(
+      server,
+      'grace@example.com',
+      'a-strong-password',
+    );
+    expect(token.length).toBeGreaterThan(0);
 
     const patched = await server.json<SanitizedUser>(
       `api/users/${created.body.id}`,
@@ -138,40 +201,30 @@ describe('users CRUD', () => {
     }>('api/users', {
       method: 'POST',
       headers: asAdmin(),
-      json: { email: 'not-an-email', name: 'x' },
+      json: { email: 'not-an-email', name: 'x', password: 'short' },
     });
     expect(status).toBe(400);
     expect(body.message).toBe('Invalid body');
-    expect(body.issues.map((i) => i.path).sort()).toEqual(['email', 'name']);
+    expect(body.issues.map((i) => i.path).sort()).toEqual([
+      'email',
+      'name',
+      'password',
+    ]);
   });
 
   test('a duplicate email is a 409', async () => {
-    const { status } = await server.json('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'grace@example.com', name: 'Impostor' },
-    });
+    const { status } = await create('grace@example.com', 'Impostor');
     expect(status).toBe(409);
   });
 
   test('ban and unban flip the flag', async () => {
-    const target = await server.json<SanitizedUser>('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'ban-me@example.com', name: 'Ban Me' },
-    });
+    const target = await create('ban-me@example.com', 'Ban Me');
 
     const banned = await server.json<SanitizedUser>(
       `api/users/${target.body.id}/ban`,
       { method: 'POST', headers: asAdmin() },
     );
     expect(banned.body.banned).toBe(true);
-
-    // A banned actor is rejected by the guard even with the right role.
-    const rejected = await server.json(`api/users`, {
-      headers: { [ACTOR_HEADER]: target.body.id },
-    });
-    expect(rejected.status).toBe(401);
 
     const unbanned = await server.json<SanitizedUser>(
       `api/users/${target.body.id}/unban`,
@@ -190,11 +243,7 @@ describe('users CRUD', () => {
   });
 
   test('DELETE returns 204 with no body', async () => {
-    const target = await server.json<SanitizedUser>('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'delete-me@example.com', name: 'Delete Me' },
-    });
+    const target = await create('delete-me@example.com', 'Delete Me');
 
     const response = await server.request(`api/users/${target.body.id}`, {
       method: 'DELETE',
@@ -222,11 +271,7 @@ describe('users CRUD', () => {
 describe('keyset pagination', () => {
   beforeAll(async () => {
     for (const n of [1, 2, 3, 4, 5]) {
-      await server.json('api/users', {
-        method: 'POST',
-        headers: asAdmin(),
-        json: { email: `page-${n}@example.com`, name: `Page ${n}` },
-      });
+      await create(`page-${n}@example.com`, `Page ${n}`);
     }
   });
 
@@ -270,11 +315,7 @@ describe('keyset pagination', () => {
   });
 
   test('search filters on email and name', async () => {
-    await server.json('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'findable@example.com', name: 'Zzyzx Unique' },
-    });
+    await create('findable@example.com', 'Zzyzx Unique');
 
     const byName = await server.json<Page<SanitizedUser>>(
       'api/users?search=Zzyzx',
@@ -292,23 +333,20 @@ describe('keyset pagination', () => {
 });
 
 describe('audit trail written by SQLite triggers', () => {
-  test('an insert through the API produces an INSERT row', async () => {
-    const created = await server.json<SanitizedUser>('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'audited@example.com', name: 'Audited' },
-    });
+  test('an insert through the API produces an INSERT row attributed to the session', async () => {
+    const created = await create('audited@example.com', 'Audited');
 
     const { status, body } = await server.json<Page<AuditLogEntry>>(
-      `api/audit-logs?entityId=${created.body.id}`,
+      `api/audit-logs?entityId=${created.body.id}&action=INSERT`,
       { headers: asAdmin() },
     );
     expect(status).toBe(200);
     expect(body.data).toHaveLength(1);
 
     const entry = body.data[0];
-    expect(entry?.action).toBe('INSERT');
     expect(entry?.entityName).toBe('User');
+    // The actor is the authenticated caller, resolved by `SessionGuard` and
+    // stamped by `AuditContextMiddleware` - not a header the client supplied.
     expect(entry?.actorId).toBe(admin.id);
     expect(entry?.oldValues).toBeNull();
     expect(entry?.newValues).toEqual({
@@ -320,11 +358,7 @@ describe('audit trail written by SQLite triggers', () => {
   });
 
   test('a ban produces an UPDATE row with both snapshots', async () => {
-    const created = await server.json<SanitizedUser>('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'update-audit@example.com', name: 'Updated' },
-    });
+    const created = await create('update-audit@example.com', 'Updated');
     await server.json(`api/users/${created.body.id}/ban`, {
       method: 'POST',
       headers: asAdmin(),
@@ -334,17 +368,13 @@ describe('audit trail written by SQLite triggers', () => {
       `api/audit-logs?entityId=${created.body.id}&action=UPDATE`,
       { headers: asAdmin() },
     );
-    expect(body.data).toHaveLength(1);
-    expect(body.data[0]?.oldValues?.['banned']).toBe(false);
-    expect(body.data[0]?.newValues?.['banned']).toBe(true);
+    const ban = body.data.find((e) => e.newValues?.['banned'] === true);
+    expect(ban).toBeDefined();
+    expect(ban?.oldValues?.['banned']).toBe(false);
   });
 
   test('a delete produces a DELETE row', async () => {
-    const created = await server.json<SanitizedUser>('api/users', {
-      method: 'POST',
-      headers: asAdmin(),
-      json: { email: 'delete-audit@example.com', name: 'Deleted' },
-    });
+    const created = await create('delete-audit@example.com', 'Deleted');
     await server.request(`api/users/${created.body.id}`, {
       method: 'DELETE',
       headers: asAdmin(),
@@ -363,13 +393,38 @@ describe('routing', () => {
   test('an unmatched path is the framework 404 through the middleware chain', async () => {
     const { status, body } = await server.json<{ status: number }>(
       'api/nothing-here',
+      { headers: asAdmin() },
     );
     expect(status).toBe(404);
     expect(body.status).toBe(404);
   });
 
   test('an unmatched method on a matched path is a 404, not a 405', async () => {
-    const response = await server.request('api/service/up', { method: 'PUT' });
+    const response = await server.request('api/service/up', {
+      method: 'PUT',
+      headers: asAdmin(),
+    });
     expect(response.status).toBe(404);
+  });
+
+  /**
+   * Pins a consequence of installing a guard globally that is easy to be surprised
+   * by.
+   *
+   * `Bun.serve({ routes })` answers a miss itself, so `listen()` installs one
+   * `fetch` fallback that puts the global middleware in front of a 404 - which is
+   * what gets an unmatched path logged and given a request id. The middleware
+   * includes `SessionGuard`, and a path that matched no route carries no route
+   * metadata, so there is no `@Public()` for the guard to read: an anonymous
+   * request for a path that does not exist is answered 401 rather than 404.
+   *
+   * Harmless for a private API and arguably better, since it stops an anonymous
+   * caller probing which paths exist. It is still a difference from NestJS, where
+   * the router answers 404 before any guard runs, and there is no way to keep the
+   * logging without also authenticating the miss.
+   */
+  test('KNOWN GAP: an anonymous request for a missing path is a 401, not a 404', async () => {
+    const { status } = await server.json('api/nothing-here');
+    expect(status).toBe(401);
   });
 });

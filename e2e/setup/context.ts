@@ -14,6 +14,9 @@ export interface TestContext {
   readonly api: ApiClient;
   readonly db: DbClient;
   readonly adminId: string;
+  readonly adminToken: string;
+  /** `http://127.0.0.1:PORT` without the api prefix, for the websocket upgrade. */
+  readonly origin: string;
 }
 
 let server: Subprocess | undefined;
@@ -37,7 +40,16 @@ const DEFAULTS: Record<string, string> = {
   NODE_ENV: 'test',
   LOG_LEVEL: 'fatal',
   SQLITE_DB_PATH: './.tmp/e2e.db',
+  STORAGE_LOCAL_ROOT: './.tmp/e2e-uploads',
   E2E_API_URL: 'http://127.0.0.1:3999/api',
+  // The credential `AuthAdminSeeder` creates at boot, and what the suite signs in
+  // with. A user row inserted by hand has no `account` row and cannot sign in.
+  SEED_ADMIN_EMAIL: 'admin@e2e-test.com',
+  SEED_ADMIN_PASSWORD: 'e2e-admin-password',
+  // The rate limiter is real and its counters live in a Redis that outlives the
+  // process, so a suite needs its own namespace and enough headroom to finish.
+  THROTTLE_LIMIT: '10000',
+  THROTTLE_PREFIX: `e2e-${crypto.randomUUID()}`,
 };
 
 /**
@@ -138,9 +150,31 @@ export const initializeTestContext = async (): Promise<TestContext> => {
   await waitForReady(API_URL, () => `${output()}${errors()}`);
 
   const db = new DbClient(DB_PATH);
-  const adminId = db.ensureAdmin('admin@e2e-test.com');
+  const email = ENV['SEED_ADMIN_EMAIL'] as string;
+  const password = ENV['SEED_ADMIN_PASSWORD'] as string;
 
-  context = { api: new ApiClient(API_URL, adminId), db, adminId };
+  // Through better-auth's own endpoint, against the running server - the same
+  // exchange a real client makes, and the only way to get a token the guard
+  // accepts.
+  const signIn = await fetch(`${API_URL}/auth/sign-in/email`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const adminToken = signIn.headers.get('set-auth-token');
+  if (adminToken === null) {
+    throw new Error(
+      `e2e sign-in failed: ${signIn.status} ${await signIn.text()}\n${output()}${errors()}`,
+    );
+  }
+
+  context = {
+    api: new ApiClient(API_URL, adminToken),
+    db,
+    adminId: db.idFor(email),
+    adminToken,
+    origin: API_URL.replace(/\/api\/?$/, ''),
+  };
   return context;
 };
 

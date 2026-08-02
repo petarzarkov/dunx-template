@@ -3,6 +3,7 @@ import { HttpFactory, type HttpApp } from '@dunx/http';
 import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
 import { testRoot } from '@dunx/testing';
 import { appModule } from './app.module.js';
+import { authDocument } from './auth/auth.document.js';
 import { validateConfig } from './config/env.validation.js';
 import { httpOptions } from './http.options.js';
 
@@ -18,7 +19,13 @@ interface OpenApiDoc {
  * exposes the app before `listen()`, so there is no window in which to call
  * `setGlobalPrefix`. `testRoot()` is the documented escape hatch.
  */
-const source = { API_PORT: '0', SQLITE_DB_PATH: ':memory:' };
+const source = {
+  API_PORT: '0',
+  SQLITE_DB_PATH: ':memory:',
+  THROTTLE_PREFIX: `test-${crypto.randomUUID()}`,
+  THROTTLE_LIMIT: '10000',
+};
+const config = validateConfig(source);
 let app: HttpApp;
 let doc: OpenApiDoc;
 
@@ -28,8 +35,9 @@ beforeAll(async () => {
       title: 'dunx-template',
       version: '0.1.0',
       root: testRoot([appModule({ source, logLevel: 'fatal' })]),
+      contribute: [authDocument(config)],
     }),
-    { ...httpOptions(validateConfig(source)), requestLogging: false },
+    { ...httpOptions(config), requestLogging: false },
   );
   app.setGlobalPrefix('api');
   await app.listen(0);
@@ -61,11 +69,27 @@ describe('the generated OpenAPI document', () => {
   });
 
   test('named request-body schemas become components', () => {
+    // `CreateUser`, `UpdateUser` and `ValidationError` are this app's; `User`,
+    // `Session`, `Account` and `Verification` came from Better Auth's own schema
+    // through `contribute`, and the merge keeps both without a prefix.
     expect(Object.keys(doc.components.schemas).sort()).toEqual([
+      'Account',
       'CreateUser',
+      'Session',
       'UpdateUser',
+      'User',
       'ValidationError',
+      'Verification',
     ]);
+  });
+
+  test('the upload route documents a multipart body', () => {
+    const post = doc.paths['/api/files']?.['post'];
+    expect(post).toBeDefined();
+    const body = post?.['requestBody'] as {
+      content: Record<string, unknown>;
+    };
+    expect(Object.keys(body.content)).toContain('application/json');
   });
 
   /**
@@ -159,6 +183,63 @@ describe('the generated OpenAPI document', () => {
     expect(names).toContain('cursor');
     expect(names).toContain('search');
     expect(params.every((p) => p.in === 'query')).toBe(true);
+  });
+
+  /**
+   * Better Auth serves `<basePath>/*` from one handler, so route discovery sees a
+   * single wildcard and the document would otherwise describe an API with no
+   * authentication surface at all. `contribute: [betterAuthDocument(...)]` asks the
+   * library for its own schema and merges it - which is the counterpart of the
+   * NestJS template's `mergeBetterAuthSchema`, except a declared route wins a
+   * collision rather than being overwritten.
+   */
+  test('Better Auth contributes its own endpoints', () => {
+    const paths = Object.keys(doc.paths);
+    expect(paths).toContain('/api/auth/sign-in/email');
+    expect(paths).toContain('/api/auth/sign-up/email');
+    expect(paths).toContain('/api/auth/get-session');
+    // The plugins are in the document too: `admin()` and `bearer()` endpoints
+    // only exist because they are in `baseAuthOptions`.
+    expect(
+      paths.filter((p) => p.startsWith('/api/auth/')).length,
+    ).toBeGreaterThan(20);
+  });
+
+  test('every contributed operation carries the auth tag', () => {
+    const operations = Object.entries(doc.paths)
+      .filter(([path]) => path.startsWith('/api/auth/') && !path.endsWith('/*'))
+      .flatMap(([, methods]) => Object.values(methods));
+
+    expect(operations.length).toBeGreaterThan(0);
+    for (const operation of operations) {
+      expect(operation['tags']).toEqual(['auth']);
+    }
+  });
+
+  /**
+   * Locks in a real gap.
+   *
+   * `@dunx/auth` mounts Better Auth's handler as five one-line wildcard routes,
+   * and route discovery documents them like any other: the document carries a
+   * literal path `/api/auth/*` with five operations, tagged with the internal
+   * class name `MountedAuthHandler` because the class has no `@ApiDoc`.
+   *
+   * `*` is not an OpenAPI path template, the five operations describe nothing, and
+   * they duplicate the surface `betterAuthDocument` describes properly two lines
+   * away. Nothing marks the mounted handler as undocumented, and there is no way
+   * for an app to exclude a controller from the document.
+   */
+  test('KNOWN GAP: the mounted auth handler is documented as a wildcard path', () => {
+    const wildcard = doc.paths['/api/auth/*'];
+    expect(wildcard).toBeDefined();
+    expect(Object.keys(wildcard ?? {}).sort()).toEqual([
+      'delete',
+      'get',
+      'patch',
+      'post',
+      'put',
+    ]);
+    expect(wildcard?.['get']?.['tags']).toEqual(['MountedAuthHandler']);
   });
 
   test('the explorer renders a self-contained page', () => {

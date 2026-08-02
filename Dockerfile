@@ -17,11 +17,18 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
+# `APP_ENV=prod` makes `BETTER_AUTH_SECRET` mandatory, so this image refuses to
+# boot without one - the development fallback is a constant in the repository and
+# anyone holding it can mint a session. Pass it with `-e BETTER_AUTH_SECRET=...`.
+#
+# Nothing else is required. With no `REDIS_URL` the cache, the queue and the
+# websocket relay all report themselves degraded and the container still serves.
 ENV NODE_ENV=production \
     APP_ENV=prod \
     TZ=UTC \
     API_PORT=3001 \
-    SQLITE_DB_PATH=/app/data/app.db
+    SQLITE_DB_PATH=/app/data/app.db \
+    STORAGE_LOCAL_ROOT=/app/data/uploads
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bunfig.toml ./

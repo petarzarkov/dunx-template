@@ -1,3 +1,7 @@
+# The app on its own, with nothing behind it, because that has to work: the cache,
+# the queue and the websocket relay all report themselves degraded rather than
+# refusing to start. Bring the services up alongside with
+# `docker compose -f docker-compose.yml -f docker-compose.services.yml up`.
 services:
   app:
     build:
@@ -16,8 +20,13 @@ services:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SQLITE_DB_PATH: /app/data/app.db
+      STORAGE_LOCAL_ROOT: /app/data/uploads
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
       TRUST_PROXY: 'true'
+      # Unset by default. Point it at the services compose file's valkey to turn
+      # the degraded areas live: `REDIS_URL=redis://redis:6379 docker compose ...`
+      REDIS_URL: ${REDIS_URL:-}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
     volumes:
       - app-data:/app/data
     healthcheck:
@@ -26,6 +35,29 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+
+  # The consumer. A second process on purpose: it builds only what a handler needs,
+  # has no HTTP server, and shares exactly one thing with the app - the module list.
+  # Scale it independently with `docker compose up --scale worker=3`.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ['bun', 'src/worker.ts']
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SQLITE_DB_PATH: /app/data/app.db
+      STORAGE_LOCAL_ROOT: /app/data/uploads
+      # A worker with no broker has nothing to do, so unlike the app it exits
+      # rather than serving degraded.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+    volumes:
+      - app-data:/app/data
+    profiles: ['worker']
 
 volumes:
   app-data:

@@ -18,6 +18,7 @@ import {
   updateUser,
   type SanitizedUser,
 } from './dto/user.dto.js';
+import { CurrentUser } from '../auth/services/current-user.service.js';
 import { UserRole } from './schema/user.schema.js';
 import { UsersService } from './services/users.service.js';
 
@@ -30,7 +31,10 @@ import { UsersService } from './services/users.service.js';
 @ApiDoc({ tags: ['users'], description: 'Read and administer user accounts.' })
 @Controller('users')
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly caller: CurrentUser,
+  ) {}
 
   @ApiDoc({ tags: ['users'], summary: 'List users, keyset paginated' })
   @Roles(UserRole.ADMIN, UserRole.USER)
@@ -49,7 +53,7 @@ export class UsersController {
   @ApiDoc({ tags: ['users'], summary: 'Create a user' })
   @Roles(UserRole.ADMIN)
   @Post('/', createUser)
-  create(input: Input<typeof createUser>): SanitizedUser {
+  create(input: Input<typeof createUser>): Promise<SanitizedUser> {
     return this.users.create(input.body);
   }
 
@@ -66,8 +70,10 @@ export class UsersController {
   })
   @Roles(UserRole.ADMIN)
   @Post('/:userId/ban', oneUser)
-  ban(input: Input<typeof oneUser>): SanitizedUser {
-    if (input.req.headers.get('x-actor-id') === input.params.userId) {
+  ban(input: Input<typeof oneUser>): Promise<SanitizedUser> {
+    // The caller comes out of `AuthContext` rather than off a header, so it is the
+    // session the guard resolved and not something the client asserted.
+    if (this.caller.require().id === input.params.userId) {
       throw new HttpError(
         HttpStatusCode.FORBIDDEN,
         'You cannot ban your own account',
@@ -79,7 +85,7 @@ export class UsersController {
   @ApiDoc({ tags: ['users'], summary: 'Lift a ban' })
   @Roles(UserRole.ADMIN)
   @Post('/:userId/unban', oneUser)
-  unban(input: Input<typeof oneUser>): SanitizedUser {
+  unban(input: Input<typeof oneUser>): Promise<SanitizedUser> {
     return this.users.setBanned(input.params.userId, false);
   }
 

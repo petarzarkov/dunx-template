@@ -17,6 +17,7 @@ export const SanitizedUser = z
     name: z.string(),
     role: z.enum([UserRole.ADMIN, UserRole.USER]),
     banned: z.boolean(),
+    emailVerified: z.boolean(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
@@ -40,6 +41,9 @@ export const CreateUser = z
   .object({
     email: z.email(),
     name: z.string().min(2).max(80),
+    // The route goes through better-auth's own sign-up, so a created user has a
+    // real credential and can sign in. The bounds are better-auth's own.
+    password: z.string().min(8).max(64),
     role: z.enum([UserRole.ADMIN, UserRole.USER]).default(UserRole.USER),
   })
   .meta({ id: 'CreateUser', title: 'Create a user' });

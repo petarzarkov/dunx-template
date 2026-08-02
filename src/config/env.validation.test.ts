@@ -50,8 +50,32 @@ describe('validateConfig', () => {
   });
 
   test('APP_ENV=prod is the only thing that sets isProd', () => {
-    expect(validateConfig({ ...base, APP_ENV: 'prod' }).isProd).toBe(true);
+    const secret = 'x'.repeat(40);
+    expect(
+      validateConfig({ ...base, APP_ENV: 'prod', BETTER_AUTH_SECRET: secret })
+        .isProd,
+    ).toBe(true);
     expect(validateConfig({ ...base, APP_ENV: 'stage' }).isProd).toBe(false);
+  });
+
+  test('production refuses the development auth secret', () => {
+    expect(() => validateConfig({ ...base, APP_ENV: 'prod' })).toThrow(
+      /BETTER_AUTH_SECRET is required when APP_ENV=prod/,
+    );
+    // Everywhere else it falls back, so a clean checkout boots with no env file.
+    expect(validateConfig(base).auth.usingDevSecret).toBe(true);
+  });
+
+  test('redis-backed sessions must name a redis', () => {
+    expect(() =>
+      validateConfig({ ...base, AUTH_SESSION_STORE: 'redis' }),
+    ).toThrow(/REDIS_URL is required when AUTH_SESSION_STORE=redis/);
+  });
+
+  test('the s3 driver must name a bucket', () => {
+    expect(() => validateConfig({ ...base, STORAGE_DRIVER: 's3' })).toThrow(
+      /S3_BUCKET is required when STORAGE_DRIVER=s3/,
+    );
   });
 
   test('an unknown timezone is rejected by name', () => {
