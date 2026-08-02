@@ -124,11 +124,17 @@ describe('the generated OpenAPI document', () => {
    * operations reference tags it never declares, and whose declared tags nothing
    * uses, so a viewer's sidebar and its operation list disagree.
    */
-  test('KNOWN GAP: doc.tags is class-name derived and ignores @ApiDoc', () => {
-    const declared = (doc as unknown as { tags: { name: string }[] }).tags
-      .map((t) => t.name)
-      .sort();
-    expect(declared).toEqual(['Audit', 'Health', 'OpenApi', 'Users']);
+  /**
+   * This was a KNOWN GAP pinning a real defect: `doc.tags` was derived from
+   * controller class names while operations carried their `@ApiDoc` tags, so the
+   * document declared tags nothing used and used tags nothing declared. Fixed in
+   * @dunx/openapi 0.2.5, which reads the tags back off the built operations. The
+   * test now asserts the two agree, which is what it was always about.
+   */
+  test('every tag the operations use is declared, and no others', () => {
+    const declared = new Set(
+      (doc as unknown as { tags: { name: string }[] }).tags.map((t) => t.name),
+    );
 
     const used = new Set<string>();
     for (const methods of Object.values(doc.paths)) {
@@ -138,7 +144,9 @@ describe('the generated OpenAPI document', () => {
         }
       }
     }
-    expect([...used].sort()).toEqual(['OpenApi', 'audit', 'service', 'users']);
+
+    expect([...used].sort()).toEqual([...declared].sort());
+    expect(used.size).toBeGreaterThan(0);
   });
 
   test('query parameters are expanded one per property', () => {
