@@ -29,10 +29,11 @@ Every row is something the NestJS template does and what replaced it here.
 | global `ZodValidationPipe` + `createZodDto` | a zod schema per source on the route: `@Get('/', { query: ListUsersQuery })`.                                                                        |
 | `@ApiTags` + `@ApiOperation`                | one `@ApiDoc({ tags, summary, description })`. See the caveat in the README.                                                                         |
 | `@ApiOkResponse({ type: X })`               | **no equivalent.** dunx documents inputs only.                                                                                                       |
-| `CanActivate` guard                         | a `Middleware` that throws. `src/core/guards/roles.guard.ts`.                                                                                        |
+| `CanActivate` guard                         | a `Middleware` that throws. `SessionGuard` from `@dunx/auth`, and `ThrottleGuard` in `src/infra/redis/guards/`.                                      |
 | `APP_GUARD`                                 | `HttpFactory.create(root, { middleware: [Guard] })`.                                                                                                 |
 | `@UseGuards(X)`                             | same name, same places, but guards compose rather than override.                                                                                     |
 | `NestInterceptor`                           | a `Middleware`. Work before `next()`, after it, or both. `src/core/middlewares/audit-context.middleware.ts` was an `APP_INTERCEPTOR`.                |
+| `SetMetadata` + `Reflector`                 | `metaKey<T>(name)` and `meta(key, value)` from `@dunx/http`, read back with `ctx.get(key)`. `src/core/decorators/throttle.decorator.ts`.             |
 | `ExceptionFilter` + `@Catch()`              | one `onError: ErrorMapper` passed to `create()`. `src/core/errors/error-mapper.ts` folds the generic filter and the SQLite filter into one function. |
 | `enableVersioning` / `@Version()`           | **no equivalent.** `setGlobalPrefix('api')` only.                                                                                                    |
 | `app.setGlobalPrefix('api')`                | same, but imperative-only and it throws after `listen()`.                                                                                            |
@@ -59,15 +60,81 @@ Every row is something the NestJS template does and what replaced it here.
 | `@nestjs/testing` `Test.createTestingModule`           | `createTestApp` / `createTestServer` from `@dunx/testing`.                                                            |
 | `.overrideProvider(X).useValue(y)`                     | `overrides: [provide(X, { useValue: y })]`, replaced in place by token.                                               |
 
+## Authentication
+
+| NestJS                                                        | dunx                                                                                                                              |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `@thallesp/nestjs-better-auth` `AuthModule.forRootAsync`      | `AuthModule.forRootAsync({ useFactory, inject }, '/auth')` from `@dunx/auth`. The second argument is the mount - see below.       |
+| the package's global `AuthGuard`                              | `SessionGuard`, listed in `HttpOptions.middleware`. It is a provider, so `@UseGuards(SessionGuard)` on one controller also works. |
+| `drizzleAdapter(db, { provider, schema })` by hand            | `drizzleDatabase(connection, { schema })` from `@dunx/auth/drizzle`. `provider` comes from the connection's own dialect.          |
+| `req.user`, `@CurrentUser()`                                  | `AuthContext`, an `AsyncLocalStorage`. `src/auth/services/current-user.service.ts` wraps it. No parameter decorator exists.       |
+| `@Public()` / `AllowAnonymous`                                | same name, from `@dunx/http`. Better Auth's own handler carries it at class scope, which is what makes sign-in reachable.         |
+| `@Roles(...)` reading the `admin()` plugin's `role`           | same name, same source. `SessionGuard` reads it; `@dunx/openapi` reads the same metadata for `x-required-roles`.                  |
+| custom `bunBcryptPassword`                                    | `bunPassword`, which `AuthModule` applies by default when `emailAndPassword` is on.                                               |
+| `RedisService` as `secondaryStorage`                          | `redisStorage(connection)`. Opt in with `AUTH_SESSION_STORE=redis`: it deliberately does not degrade.                             |
+| `mergeBetterAuthSchema` in `setupDocs.ts`                     | `betterAuthDocument(auth, { basePath })` passed to `OpenApiModule.forRoot({ contribute })`. A declared route wins a collision.    |
+| `@ApiAuth()` Swagger marker                                   | nothing to add. `@Roles`/`@Public` already produce the security requirement.                                                      |
+| `HtmlSessionAuthMiddleware` over the docs and dashboard pages | **no equivalent.** The explorer is not behind a session; the queue routes are `@Roles('admin')` instead.                          |
+
+**The `basePath` and `mountAt` split is the one thing to get right.** Under
+`setGlobalPrefix('api')` the handler is a route at `/auth` while better-auth
+matches the whole pathname `/api/auth`, so the two are different strings for one
+URL: mount at `/auth`, configure `basePath: '/api/auth'`. Getting it wrong is a
+boot error rather than a 404 at runtime.
+
+## Queues
+
+| NestJS                                                       | dunx                                                                                                            |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `BullModule.forRootAsync` + `registerQueue`                  | `QueueModule.forRootAsync`. A queue is a key prefix, so there is nothing to register - `publisher.queue(name)`. |
+| `@Processor` class + `WorkerHost`                            | `@JobHandler({ queue, name })` on a method of any provider. No class decorator, no base class.                  |
+| the template's own `JobDispatcher` + `job.processor.ts` fork | `WorkerFactory.create(workerModule())` in `src/worker.ts`. A worker is its own container, not a fork.           |
+| `JobPublisherService`                                        | `JobPublisher`, which returns bullmq's own `Queue` rather than wrapping it.                                     |
+| `ioredis` connection options                                 | a URL. `@dunx/infra/queue` runs bullmq's `createBunRedisClient` over `Bun.RedisClient`.                         |
+| `@bull-board/express` at `/api/queues`                       | **no equivalent for the page.** `src/infra/queue/queues.controller.ts` serves the same data as admin-only JSON. |
+| `runWithTimeout(jobTimeoutMs)` in the dispatcher             | `jobTimeoutMs` on `QueueOptions`.                                                                               |
+
+## Files, images and storage
+
+| NestJS                                                     | dunx                                                                                                         |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `@aws-sdk/client-s3` in `s3.service.ts`                    | `S3StorageOptions`, which is `Bun.S3Client`. Credentials fall through to Bun's own resolution.               |
+| no local fallback                                          | `LocalStorageOptions`, which is `Bun.file`/`Bun.write`/`Bun.Glob`. It is the default, so uploads need no S3. |
+| `FilesInterceptor` + multer + `MultipartFormDataGuard`     | nothing. Bun parses by content type and answers 415 itself; the body is a zod schema like any other.         |
+| `@ValidatedFiles({ fileType, maxSize })`                   | plain checks in `FilesService`, against validated config rather than decorator arguments.                    |
+| `new Bun.Image(buffer).metadata()` in a `@Global()` helper | `Images` from `@dunx/infra/images`, plus a resize and re-encode pipeline the template did not have.          |
+
+## Realtime
+
+| NestJS                                   | dunx                                                                                                        |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `@WebSocketGateway()` + socket.io        | `@Gateway('/ws')`. Served by the same `Bun.serve` call as the HTTP routes - no second server, no adapter.   |
+| `io.use()` auth middleware               | `@OnUpgrade()`. Return a `Response` and there is no socket; anything else becomes `socket.data.context`.    |
+| `@SubscribeMessage('x')`                 | `@OnMessage('x')`. It receives the decoded payload, and what it returns is replied under the same event.    |
+| `socket.join(room)` / `io.to(room).emit` | `socket.subscribe(topic)` / `pubsub.publishEvent(topic, ...)`. Bun's own pub/sub, no JavaScript room map.   |
+| namespaces                               | **no equivalent.** One gateway is one path; topics do the rest.                                             |
+| acknowledgement callbacks                | the handler's return value, sent back under the same event name.                                            |
+| `@socket.io/redis-adapter`               | `relay: new RedisRelay({ url })` in `HttpOptions`. Two methods over `Bun.RedisClient`, no extra dependency. |
+| `@socket.io/redis-emitter` in the worker | `encodeRelay` + `encode` onto the relay channel. `src/notifications/events/events.publisher.ts`.            |
+
+## Cache and rate limiting
+
+| NestJS                                                          | dunx                                                                                                              |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `CacheModule` + `keyv` + `KeyvIoredisAdapter` + `cache-manager` | `CacheService`, forty lines over `RedisConnection`. Three dependencies for six commands Bun already has.          |
+| `ThrottlerModule` with three named tiers                        | `THROTTLE_LIMIT`/`THROTTLE_WINDOW_SECONDS`, and `@Throttle({ limit, windowSeconds })` to override per route.      |
+| a second `EnvThrottlerGuard` with its own Lua script            | the same guard. `INCR` then `EXPIRE` on the call that created the key - Bun pipelines, so it is one round trip.   |
+| `RedisService.newConnection(name, { db })` per concern          | one connection, or `RedisModule.forRootAsync(factory, 'name')` for a second. Key prefixes rather than db numbers. |
+
 ## Deliberately not ported
 
-The NestJS template also carries AI providers, Resend email with React Email
-templates, S3 file upload, BullMQ queues with a Bull Board dashboard, Socket.io
-with a Redis adapter, Better Auth, a CMS and Redis caching and throttling. dunx
-has an answer for most of them (`@dunx/infra/queue`, `@dunx/infra/files`,
-`@dunx/infra/images`, `@dunx/auth`, `@dunx/http`'s gateways), but each drags in a
-service dependency, and none of them is the part of the template you read first.
-Authentication is the notable absence: `RolesGuard` reads an `x-actor-id` header
-so that the guard, `@Roles`, `@Public` and the metadata machinery are all
-exercised without a `better-auth` dependency. Swap it for `@dunx/auth`'s
-`SessionGuard` when you add real sessions.
+Six things, each for a reason that is not "it needs a service running".
+
+| Not ported                           | Why                                                                                                                                                                                                                                                                                    |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AI providers                         | A `fetch` to a vendor. Nothing about it is framework-shaped, and a template that picks one for you is picking wrong for most readers.                                                                                                                                                  |
+| Resend email + React Email templates | Same: a transport the consumer owns. `EmailService` logs the message it would have sent, which is enough to prove the queue delivered the job to a worker, and swapping in a provider is one method body.                                                                              |
+| The CMS                              | A product feature, not a framework capability.                                                                                                                                                                                                                                         |
+| Bull Board's HTML page               | An Express-mounted React application, and `Bun.serve` is not Express. What is portable is the data - counts per queue, one job's state and result, retry and drain - so `/api/queues` serves that as admin-only JSON and a dashboard is whatever renders it.                           |
+| Swagger UI preauthorization          | The template hooks the sign-in response and calls `preauthorizeApiKey`, so the explorer is authenticated straight after a login. dunx's explorer has an Authorize dialog and no hook to drive it from a response. Worth adding upstream.                                               |
+| Postgres                             | `DB_TYPE=postgres` is refused at boot. The data layer here is synchronous (`bun:sqlite`, `SyncDatabase`), and making it async is a rewrite of every repository rather than a configuration change. `@dunx/infra/db` supports `Bun.SQL` perfectly well - this template does not use it. |
