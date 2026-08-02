@@ -41,6 +41,13 @@ const csv = (fallback: readonly string[]) =>
             .filter((part) => part.length > 0),
     );
 
+const blank = z
+  .string()
+  .optional()
+  .transform((value) =>
+    value === undefined || value === '' ? undefined : value,
+  );
+
 export const serviceVarsSchema = z.object({
   APP_ENV: z
     .enum([AppEnv.LOCAL, AppEnv.DEV, AppEnv.STAGE, AppEnv.PROD])
@@ -71,8 +78,11 @@ export const serviceVarsSchema = z.object({
 
   HEALTH_MAX_MEMORY_MB: z.coerce.number().int().min(16).default(2048),
 
-  SERVICE_COMMIT_SHA: z.string().optional(),
-  SERVICE_COMMIT_MESSAGE: z.string().optional(),
+  // Docker `ARG COMMIT_SHA` with no value becomes an empty string, not an absent
+  // variable, so an empty one is normalised to undefined rather than reported as
+  // a build with a blank sha.
+  SERVICE_COMMIT_SHA: blank,
+  SERVICE_COMMIT_MESSAGE: blank,
 
   CORS_ORIGIN: z.string().default('*'),
   TRUST_PROXY: z.stringbool().default(false),
