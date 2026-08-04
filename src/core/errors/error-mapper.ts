@@ -7,6 +7,7 @@ import {
   ValidationError,
   type ErrorMapper,
 } from '@dunx/http';
+import { CursorError, PageOptionsError } from '@dunx/infra/pagination';
 
 export interface ErrorBody {
   readonly error: string;
@@ -78,6 +79,23 @@ export const toErrorBody = (error: unknown): ErrorBody | undefined => {
       error: nameOf(error.status),
       message: error.message,
       status: error.status,
+    };
+  }
+  /**
+   * A cursor that did not come from `encodeCursor`, or page options outside their
+   * bounds. `@dunx/infra/pagination` raises `AppError` subclasses rather than
+   * `HttpError` on purpose - it must not depend on the web layer - so placing them
+   * is this function's job, and 400 is the answer for both: the caller sent
+   * something it made up.
+   *
+   * The message is passed through unchanged. Both are written for a client to read
+   * and neither names a column, a table or which layer rejected it.
+   */
+  if (error instanceof CursorError || error instanceof PageOptionsError) {
+    return {
+      error: nameOf(HttpStatusCode.BAD_REQUEST),
+      message: error.message,
+      status: HttpStatusCode.BAD_REQUEST,
     };
   }
   if (error instanceof SQLiteError) return fromSqlite(error);

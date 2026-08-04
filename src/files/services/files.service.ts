@@ -9,7 +9,7 @@ import {
 import { HttpError, HttpStatusCode } from '@dunx/http';
 import { AppConfigService } from '../../config/app.config.service.js';
 import { JOBS, QUEUES } from '../../notifications/events/events.js';
-import type { Page } from '../../core/pagination/page-options.dto.js';
+import type { Page } from '@dunx/infra/pagination';
 import type { FileMetadata, UploadBody } from '../dto/file.dto.js';
 import type { FileRow } from '../schema/file.schema.js';
 import {
@@ -42,8 +42,8 @@ export class FilesService {
     private readonly logger: Logger,
   ) {}
 
-  list(filters: ListFilesFilters): Page<FileMetadata> {
-    const page = this.repo.list(filters);
+  async list(filters: ListFilesFilters): Promise<Page<FileMetadata>> {
+    const page = await this.repo.list(filters);
     return { data: page.data.map(present), meta: page.meta };
   }
 

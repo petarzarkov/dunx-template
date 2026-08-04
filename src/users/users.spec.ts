@@ -4,7 +4,7 @@ import { appModule } from '../app.module.js';
 import { validateConfig } from '../config/env.validation.js';
 import { httpOptions } from '../http.options.js';
 import { bearer, signIn, signUp } from '../test-support/session.js';
-import type { Page } from '../core/pagination/page-options.dto.js';
+import type { Page } from '@dunx/infra/pagination';
 import type { AuditLogEntry } from '../audit/dto/audit-log.dto.js';
 import type { SanitizedUser } from './dto/user.dto.js';
 
@@ -303,7 +303,9 @@ describe('keyset pagination', () => {
       { headers: asAdmin() },
     );
     expect(status).toBe(400);
-    expect(body.message).toBe('Invalid pagination cursor');
+    // The framework's wording, not this app's: `CursorError` is raised by
+    // `@dunx/infra/pagination` and the error mapper passes its message through.
+    expect(body.message).toBe('Invalid pagination cursor.');
   });
 
   test('take is clamped by the schema', async () => {

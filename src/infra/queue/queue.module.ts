@@ -1,10 +1,13 @@
 import type { DynamicModule } from '@dunx/core';
 import { QueueModule } from '@dunx/infra/queue';
 import { AppConfigService } from '../../config/app.config.service.js';
-import { QueuesController } from './queues.controller.js';
+import { QueueDashboardFeatureModule } from './queue-dashboard.module.js';
 
 export interface QueueModuleOptions {
-  /** `false` in the worker process, which has no HTTP routes. */
+  /**
+   * `false` in the worker process, which has no HTTP server and therefore nothing
+   * to mount a dashboard on.
+   */
   readonly controllers?: boolean;
 }
 
@@ -57,10 +60,12 @@ export class QueuesModule {
           },
           inject: [AppConfigService] as const,
         }),
+        // Bull Board, admin-gated. Not in the worker: it is a page, and the worker
+        // serves nothing.
+        ...(options.controllers === false
+          ? []
+          : [QueueDashboardFeatureModule.forRoot()]),
       ],
-      ...(options.controllers === false
-        ? {}
-        : { controllers: [QueuesController] }),
     };
   }
 }

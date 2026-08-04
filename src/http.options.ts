@@ -1,5 +1,6 @@
 import { SessionGuard } from '@dunx/auth';
 import { RedisRelay, type HttpOptions } from '@dunx/http';
+import { QueueDashboardMiddleware } from '@dunx/queue-dashboard';
 import { SERVICE_ROUTES } from './constants.js';
 import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
@@ -17,12 +18,34 @@ import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 export const httpOptions = (config: AppConfig): HttpOptions => {
   const servicePath = `/${config.app.prefix}/${SERVICE_ROUTES.BASE}`;
   return {
-    // Outermost first, after the built-in request logger. `SessionGuard` leads
-    // because everything after it wants to know who is calling: it runs the rest
-    // of the chain inside `AuthContext`, so the throttler can count per user and
-    // the audit stamp can name one. A guard is middleware that throws, so
-    // ordering is the only thing that decides which runs first.
-    middleware: [SessionGuard, ThrottleGuard, AuditContextMiddleware],
+    /**
+     * Outermost first, after the built-in request logger. A guard is middleware
+     * that throws, so ordering is the only thing that decides which runs first.
+     *
+     * **`QueueDashboardMiddleware` leads, ahead of `SessionGuard`, and that is
+     * load-bearing.** Behind the guard, an anonymous request for `/queues` gets a
+     * 401 - which tells an unauthenticated caller there is something at that path
+     * worth authenticating for, and the whole point of the package answering 404
+     * is not to. Measured: with it registered last, both anonymous and
+     * bad-session requests came back 401 rather than 404.
+     *
+     * Putting it first is safe because its `authorize` asks better-auth for the
+     * session itself rather than reading the `AuthContext` that `SessionGuard`
+     * writes - see queue-dashboard.module.ts. It also means the board's paths do
+     * not pay for the throttler or the audit stamp, which is what the package
+     * intends by taking a function rather than a list of guards.
+     *
+     * `SessionGuard` then leads the rest, because everything after it wants to
+     * know who is calling: it runs the remainder of the chain inside
+     * `AuthContext`, so the throttler can count per user and the audit stamp can
+     * name one.
+     */
+    middleware: [
+      QueueDashboardMiddleware,
+      SessionGuard,
+      ThrottleGuard,
+      AuditContextMiddleware,
+    ],
     onError: errorMapper,
     requestLogging: {
       requestBody: config.log.requestBody,

@@ -91,6 +91,11 @@ export const validateConfig = (env: ConfigSource) => {
       jobTimeoutMs: vars.QUEUE_JOB_TIMEOUT_MS,
     },
     ws: { relayChannel: vars.WS_RELAY_CHANNEL },
+    email: {
+      webhookUrl: vars.EMAIL_WEBHOOK_URL,
+      timeoutMs: vars.EMAIL_TIMEOUT_MS,
+      maxRetries: vars.EMAIL_MAX_RETRIES,
+    },
     storage: {
       driver: vars.STORAGE_DRIVER,
       localRoot: vars.STORAGE_LOCAL_ROOT,

@@ -1,63 +1,84 @@
-# The app on its own, with nothing behind it, because that has to work: the cache,
-# the queue and the websocket relay all report themselves degraded rather than
-# refusing to start. Bring the services up alongside with
-# `docker compose -f docker-compose.yml -f docker-compose.services.yml up`.
+# The backing services, and nothing else.
+#
+#   docker compose up -d      # valkey, which is all most work needs
+#   bun run dev               # the app, from source, with --watch
+#   bun run worker            # the consumer, in a second terminal
+#
+# **The app is deliberately not a service here, and neither is the worker.** A
+# compose file for a template exists to start the things you cannot run from source.
+# `bun --watch src/main.ts` is a better development loop than any container, and
+# building an image on every `up` to get a worse version of it is a tax with no
+# return. The worker was its own container for even less reason: it is a second
+# *process*, which is a real design decision, but `bun run worker` in another
+# terminal is that same decision without a build.
+#
+# The `Dockerfile` is still here and still built in CI. That is for deploying, which
+# is a different job from developing.
+#
+# **Needing this file at all is never a requirement.** Every area it starts degrades
+# on its own: with no Redis the cache reports itself degraded, the throttler stops
+# counting, the queue dashboard serves an empty board and websocket fan-out stays
+# local to the process; with no bucket the local disk backend is the default.
+# `bun run start`, `bun test` and `bun run test:e2e` all pass with none of this
+# running.
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        COMMIT_SHA: ${COMMIT_SHA:-local}
-        COMMIT_MESSAGE: ${COMMIT_MESSAGE:-local build}
-    container_name: dunx-template
+  redis:
+    # Valkey rather than Redis: `Bun.RedisClient` speaks the same protocol, the
+    # licence is unambiguous, and `valkey://` is the first URL Bun's own default
+    # chain looks for.
+    image: valkey/valkey:8-alpine
+    container_name: dunx-template-valkey
     restart: unless-stopped
     ports:
-      - '${API_PORT:-3001}:3001'
-    environment:
-      API_PORT: 3001
-      APP_ENV: ${APP_ENV:-local}
-      NODE_ENV: production
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      SQLITE_DB_PATH: /app/data/app.db
-      STORAGE_LOCAL_ROOT: /app/data/uploads
-      CORS_ORIGIN: ${CORS_ORIGIN:-*}
-      TRUST_PROXY: 'true'
-      # Unset by default. Point it at the services compose file's valkey to turn
-      # the degraded areas live: `REDIS_URL=redis://redis:6379 docker compose ...`
-      REDIS_URL: ${REDIS_URL:-}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
-    volumes:
-      - app-data:/app/data
+      - '${REDIS_PORT:-6379}:6379'
+    command: ['valkey-server', '--save', '60', '1', '--appendonly', 'no']
     healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:3001/api/service/health']
-      interval: 30s
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 10s
       timeout: 3s
-      retries: 3
-      start_period: 5s
+      retries: 5
 
-  # The consumer. A second process on purpose: it builds only what a handler needs,
-  # has no HTTP server, and shares exactly one thing with the app - the module list.
-  # Scale it independently with `docker compose up --scale worker=3`.
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  # S3, locally, and behind a profile so a plain `up` is Redis on its own:
+  #
+  #   docker compose --profile s3 up -d
+  #
+  # Then set STORAGE_DRIVER=s3 and the five S3_* variables in .env to exercise
+  # `Bun.S3Client` instead of `Bun.file`, with no code change - the backend is one
+  # `StorageOptions` subclass.
+  minio:
+    image: minio/minio:latest
+    container_name: dunx-template-minio
     restart: unless-stopped
-    command: ['bun', 'src/worker.ts']
+    profiles: ['s3']
+    ports:
+      - '9000:9000'
+      - '9001:9001'
     environment:
-      APP_ENV: ${APP_ENV:-local}
-      NODE_ENV: production
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      SQLITE_DB_PATH: /app/data/app.db
-      STORAGE_LOCAL_ROOT: /app/data/uploads
-      # A worker with no broker has nothing to do, so unlike the app it exits
-      # rather than serving degraded.
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      MINIO_ROOT_USER: dunx
+      MINIO_ROOT_PASSWORD: dunx-secret
+    command: ['server', '/data', '--console-address', ':9001']
     volumes:
-      - app-data:/app/data
-    profiles: ['worker']
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Creates the bucket once and exits, so `--profile s3 up` is enough to have
+  # somewhere to put an object.
+  minio-init:
+    image: minio/mc:latest
+    profiles: ['s3']
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 dunx dunx-secret &&
+      mc mb --ignore-existing local/dunx-template &&
+      echo 'bucket ready'
+      "
 
 volumes:
-  app-data:
+  minio-data:

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { authVarsSchema } from './dto/auth-vars.dto.js';
 import { dbVarsSchema, DbType } from './dto/db-vars.dto.js';
+import { notificationVarsSchema } from './dto/notification-vars.dto.js';
 import { redisVarsSchema } from './dto/redis-vars.dto.js';
 import { serviceVarsSchema } from './dto/service-vars.dto.js';
 import { StorageDriver, storageVarsSchema } from './dto/storage-vars.dto.js';
@@ -17,6 +18,7 @@ export const envVarsSchema = z
     ...redisVarsSchema.shape,
     ...storageVarsSchema.shape,
     ...authVarsSchema.shape,
+    ...notificationVarsSchema.shape,
   })
   .superRefine((vars, ctx) => {
     if (vars.DB_TYPE === DbType.POSTGRES && vars.POSTGRES_URL === undefined) {

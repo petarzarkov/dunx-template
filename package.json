@@ -26,15 +26,19 @@
     "db:studio": "bun --env-file=.env drizzle-kit studio",
     "db:drop": "bun ./scripts/db-drop.ts",
     "seed": "bun --env-file=.env ./scripts/seed.ts",
-    "gen:openapi": "bunx dunx-openapi ./src/openapi.config.ts"
+    "gen:openapi": "bunx dunx-openapi ./src/openapi.config.ts",
+    "gen:env:docs": "bun ./scripts/gen-env-docs.ts"
   },
   "dependencies": {
-    "@dunx/auth": "^0.2.5",
-    "@dunx/core": "^0.2.5",
-    "@dunx/http": "^0.2.5",
-    "@dunx/infra": "^0.2.5",
-    "@dunx/openapi": "^0.2.5",
-    "@dunx/transform": "^0.2.5",
+    "@bull-board/api": "^8.5.0",
+    "@bull-board/ui": "^8.5.0",
+    "@dunx/auth": "^0.8.0",
+    "@dunx/core": "^0.8.0",
+    "@dunx/http": "^0.8.0",
+    "@dunx/infra": "^0.8.0",
+    "@dunx/openapi": "^0.8.0",
+    "@dunx/queue-dashboard": "^0.8.0",
+    "@dunx/transform": "^0.8.0",
     "better-auth": "^1.6.25",
     "bullmq": "^6.0.5",
     "drizzle-orm": "^0.45.2",
@@ -42,7 +46,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@dunx/testing": "^0.2.5",
+    "@dunx/testing": "^0.8.0",
     "@types/bun": "^1.3.14",
     "drizzle-kit": "^0.31.10",
     "oxfmt": "^0.61.0",

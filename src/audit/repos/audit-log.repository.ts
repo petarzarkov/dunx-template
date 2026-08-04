@@ -1,10 +1,6 @@
 import { and, eq, type SQL } from 'drizzle-orm';
 import { SyncDatabase } from '@dunx/infra/db';
-import { PaginationFactory } from '../../core/pagination/pagination.factory.js';
-import type {
-  Page,
-  PageOptions,
-} from '../../core/pagination/page-options.dto.js';
+import { paginate, type Page, type PageOptions } from '@dunx/infra/pagination';
 import * as schema from '../../infra/db/schema.js';
 import {
   auditLog,
@@ -20,12 +16,9 @@ export interface AuditFilters extends PageOptions {
 }
 
 export class AuditLogRepository {
-  constructor(
-    private readonly db: SyncDatabase<typeof schema>,
-    private readonly pagination: PaginationFactory,
-  ) {}
+  constructor(private readonly db: SyncDatabase<typeof schema>) {}
 
-  list(filters: AuditFilters): Page<AuditLogRow> {
+  list(filters: AuditFilters): Promise<Page<AuditLogRow>> {
     const clauses: SQL[] = [];
     if (filters.actorId !== undefined) {
       clauses.push(eq(auditLog.actorId, filters.actorId));
@@ -40,12 +33,11 @@ export class AuditLogRepository {
       clauses.push(eq(auditLog.entityId, filters.entityId));
     }
 
-    return this.pagination.paginate<typeof auditLog, AuditLogRow>({
+    return paginate<typeof auditLog, AuditLogRow>({
+      db: this.db,
       table: auditLog,
-      id: auditLog.id,
-      sort: auditLog.createdAt,
-      sortKey: 'createdAt',
       options: filters,
+      orderBy: 'createdAt',
       where: clauses.length === 0 ? undefined : and(...clauses),
     });
   }

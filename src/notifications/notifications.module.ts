@@ -1,6 +1,7 @@
 import { provide, type DynamicModule } from '@dunx/core';
 import { RedisConnection } from '@dunx/infra/redis';
 import { PubSub } from '@dunx/http';
+import { HttpModule } from '@dunx/http/client';
 import { AppConfigService } from '../config/app.config.service.js';
 import {
   EventsPublisher,
@@ -40,6 +41,27 @@ export class NotificationsModule {
 
     return {
       module: NotificationsModule,
+      imports: [
+        /**
+         * The outbound client `EmailService` posts through, registered under the
+         * name `email` rather than as the app's default `HttpService` - a named
+         * registration deliberately does not claim the unnamed token, so a second
+         * upstream added later coexists with this one instead of colliding.
+         *
+         * `forRootAsync` because the timeout comes off validated config, which is the
+         * one thing a zero-argument `forRoot` cannot read.
+         */
+        HttpModule.forRootAsync(
+          {
+            useFactory: (config: AppConfigService) => ({
+              timeoutMs: config.get('email').timeoutMs,
+              headers: { 'content-type': 'application/json' },
+            }),
+            inject: [AppConfigService] as const,
+          },
+          'email',
+        ),
+      ],
       providers: [
         EmailService,
         NotificationJobs,

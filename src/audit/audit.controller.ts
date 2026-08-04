@@ -1,6 +1,6 @@
 import { Controller, Get, Roles, type Input } from '@dunx/http';
 import { ApiDoc } from '@dunx/openapi';
-import type { Page } from '../core/pagination/page-options.dto.js';
+import type { Page } from '@dunx/infra/pagination';
 import { UserRole } from '../users/schema/user.schema.js';
 import { listAudit, type AuditLogEntry } from './dto/audit-log.dto.js';
 import { AuditService } from './services/audit.service.js';
@@ -17,7 +17,7 @@ export class AuditController {
   @ApiDoc({ tags: ['audit'], summary: 'List audit entries, keyset paginated' })
   @Roles(UserRole.ADMIN)
   @Get('/', listAudit)
-  list(input: Input<typeof listAudit>): Page<AuditLogEntry> {
+  list(input: Input<typeof listAudit>): Promise<Page<AuditLogEntry>> {
     return this.audit.list(input.query);
   }
 }

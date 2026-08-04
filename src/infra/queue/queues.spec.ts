@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Subprocess } from 'bun';
+import { JobPublisher } from '@dunx/infra/queue';
 import { createTestServer, type TestServer } from '@dunx/testing';
 import { appModule } from '../../app.module.js';
 import { validateConfig } from '../../config/env.validation.js';
@@ -12,21 +13,27 @@ import { JOBS, QUEUES } from '../../notifications/events/events.js';
  * worker is its own container with its own connections, so `bun run worker` is a
  * second process and this suite spawns it.
  *
- * Every assertion is skipped when Redis is unreachable, because `bun test` has to
- * pass on a machine with nothing running - the degraded side of the same contract
- * is asserted in `src/infra/redis/redis.spec.ts`.
+ * Every assertion that needs a broker is skipped when Redis is unreachable, because
+ * `bun test` has to pass on a machine with nothing running - the degraded side of the
+ * same contract is asserted in `src/infra/redis/redis.spec.ts`.
+ *
+ * **Jobs are published and read through `JobPublisher`, not over HTTP.** They used to
+ * go through a `QueuesController` this app wrote because dunx had no dashboard, and
+ * that controller is gone now that `@dunx/queue-dashboard` serves the real Bull
+ * Board. Driving bullmq's own `Queue` is the better test anyway: it asserts the
+ * queue, not an HTTP shape wrapped around it.
  */
 const APP_DIR = new URL('../../..', import.meta.url).pathname;
 const PREFIX = `test-${crypto.randomUUID()}`;
 const DB_PATH = `./.tmp/queue-spec-${crypto.randomUUID()}.db`;
 
 let server: TestServer;
+let publisher: JobPublisher;
 let worker: Subprocess | undefined;
 let token = '';
 let queueUp = false;
 
 interface JobView {
-  id: string;
   state: string;
   result: unknown;
   failedReason: string | null;
@@ -45,11 +52,18 @@ const source = {
 };
 
 const enqueue = async (name: string, data: unknown): Promise<string> => {
-  const { body } = await server.json<{ id: string }>(
-    `api/queues/${QUEUES.NOTIFICATIONS}/jobs`,
-    { method: 'POST', headers: bearer(token), json: { name, data } },
-  );
-  return body.id;
+  const job = await publisher.publish(QUEUES.NOTIFICATIONS, name, data);
+  return job.id ?? '(unassigned)';
+};
+
+const view = async (id: string): Promise<JobView> => {
+  const job = await publisher.queue(QUEUES.NOTIFICATIONS).getJob(id);
+  if (job === undefined) throw new Error(`no job ${id}`);
+  return {
+    state: await job.getState(),
+    result: (job.returnvalue as unknown) ?? null,
+    failedReason: job.failedReason ?? null,
+  };
 };
 
 /**
@@ -60,15 +74,11 @@ const enqueue = async (name: string, data: unknown): Promise<string> => {
 const settled = async (id: string): Promise<JobView> => {
   let last: JobView | undefined;
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    const { body } = await server.json<JobView>(
-      `api/queues/${QUEUES.NOTIFICATIONS}/jobs/${id}`,
-      { headers: bearer(token) },
-    );
-    last = body;
+    last = await view(id);
     // `failedReason` rather than `state === 'failed'`: with retries configured a
     // job that has thrown sits in `delayed` between attempts, and only becomes
     // `failed` once every attempt is spent.
-    if (body.result !== null || body.failedReason !== null) return body;
+    if (last.result !== null || last.failedReason !== null) return last;
     await Bun.sleep(150);
   }
   const output =
@@ -84,15 +94,24 @@ beforeAll(async () => {
   server = await createTestServer({
     modules: [appModule({ source, logLevel: 'fatal' })],
     prefix: 'api',
+    // `QueueDashboardMiddleware` is in here, first in the chain - which is why the
+    // authorization assertions below get the package's 404 and not the session
+    // guard's 401. See http.options.ts.
     ...httpOptions(validateConfig(source)),
     requestLogging: false,
   });
+  publisher = server.app.get(JobPublisher);
   token = await signIn(server, 'admin@local.dev', 'admin-password');
 
-  // One request decides it: with no Redis the route answers 503 in milliseconds
-  // rather than hanging, which is what makes this check cheap enough to do here.
-  const probe = await server.json('api/queues', { headers: bearer(token) });
-  queueUp = probe.status === 200;
+  // One operation decides it: with `maxRetries: 0` and a connection timeout, an
+  // enqueue against a down Redis rejects in milliseconds rather than hanging, which
+  // is what makes this check cheap enough to do here.
+  try {
+    await publisher.queue(QUEUES.NOTIFICATIONS).getJobCounts();
+    queueUp = true;
+  } catch {
+    queueUp = false;
+  }
 
   if (queueUp) {
     worker = Bun.spawn(['bun', 'src/worker.ts'], {
@@ -113,43 +132,42 @@ afterAll(async () => {
 });
 
 describe('the queue dashboard', () => {
-  test('is admin only', async () => {
-    const { status } = await server.json('api/queues');
-    expect(status).toBe(401);
+  /**
+   * Not served without an admin session, and the status is the point: a dashboard
+   * that answered 403 would have confirmed to an anonymous caller that there is a
+   * dashboard at that path. `authorize` returns false and the package answers 404.
+   *
+   * Both of these hold with no Redis running, because `authorize` is checked before
+   * anything bull-board owns is loaded - which is also what keeps an app that mounts
+   * the board from connecting to a broker at boot.
+   */
+  test('is invisible to an anonymous caller', async () => {
+    const response = await server.request('queues');
+    expect(response.status).toBe(404);
   });
 
-  test('reports counts for every declared queue', async () => {
-    if (!queueUp) return;
-    const { status, body } = await server.json<{
-      broker: string;
-      queues: { name: string; counts: Record<string, number> }[];
-    }>('api/queues', { headers: bearer(token) });
-
-    expect(status).toBe(200);
-    expect(body.queues.map((q) => q.name).sort()).toEqual([
-      'media',
-      'notifications',
-    ]);
-    expect(body.queues[0]?.counts).toHaveProperty('waiting');
-    // The broker URL is redacted, so a password in it never reaches a response.
-    expect(body.broker).not.toContain('@');
-  });
-
-  test('an unknown queue name is a 400 from the params schema', async () => {
-    if (!queueUp) return;
-    const { status } = await server.json('api/queues/nope/jobs/1', {
-      headers: bearer(token),
+  test('is invisible to a caller whose session does not resolve', async () => {
+    const response = await server.request('queues', {
+      headers: { authorization: 'Bearer not-a-real-session' },
     });
-    expect(status).toBe(400);
+    expect(response.status).toBe(404);
   });
 
-  test('an unknown job id is a 404', async () => {
+  test('serves the board to an admin', async () => {
     if (!queueUp) return;
-    const { status } = await server.json(
-      `api/queues/${QUEUES.NOTIFICATIONS}/jobs/999999`,
-      { headers: bearer(token) },
-    );
-    expect(status).toBe(404);
+    const response = await server.request('queues', { headers: bearer(token) });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    // bull-board's own entry template, rendered by the substitution renderer -
+    // which is why `ejs` is not a dependency here.
+    expect(await response.text()).toContain('id="root"');
+  });
+
+  test('a path outside the board falls through to the app', async () => {
+    // The middleware is global, so this is the assertion that it does not swallow
+    // requests that are not its own.
+    const { status } = await server.json('api/service/up');
+    expect(status).toBe(200);
   });
 });
 

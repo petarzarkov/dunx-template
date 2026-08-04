@@ -81,17 +81,22 @@ describe('with a broker that will not answer', () => {
     expect(body.degraded['queue']?.status).toBe('degraded');
   });
 
-  test('the queue routes answer 503 rather than hanging', async () => {
+  /**
+   * The board's *page* does not need the broker: bull-board renders its shell and
+   * the browser then asks for the queue data separately, so an unreachable Redis
+   * costs the numbers rather than the page. This used to assert a 503 from a
+   * `QueuesController` this app wrote, which no longer exists.
+   *
+   * Answering at all is the assertion, and answering promptly is half of it - a
+   * dashboard that hangs on a dead broker is worse than one that shows zeroes.
+   */
+  test('the queue dashboard still serves its page with no broker', async () => {
     const started = Bun.nanoseconds();
-    const { status, body } = await server.json<{ message: string }>(
-      'api/queues',
-      { headers: bearer(token) },
-    );
+    const response = await server.request('queues', { headers: bearer(token) });
     const elapsedMs = (Bun.nanoseconds() - started) / 1e6;
 
-    expect(status).toBe(503);
-    expect(body.message).toStartWith('Queue unavailable');
-    // A degraded route has to answer, and answering slowly is worse than 503.
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('id="root"');
     expect(elapsedMs).toBeLessThan(5000);
   });
 

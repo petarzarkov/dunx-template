@@ -12,36 +12,46 @@ import { SERVICE_ROUTES } from './constants.js';
 
 /**
  * The config is validated here as well as inside `ConfigModule`, because
- * `HttpOptions` and `OpenApiModule.forRoot` are both evaluated *before* the
- * container exists, so nothing can be injected into them:
+ * `HttpOptions` is an argument to `HttpFactory.create` - the call that *builds* the
+ * container - so `requestLogging`, `onError`, `middleware` and `relay` cannot read
+ * validated config. Middleware is registered by class, never by instance, so the
+ * NestJS trick of `app.useGlobalInterceptors(new HttpLoggingInterceptor(config))`
+ * after `app.get(ConfigService)` has no counterpart.
  *
- *  - `requestLogging` is an `HttpOptions` field and `HttpFactory.create` is what
- *    builds the container, so `app.get(AppConfigService)` is not available yet.
- *    Middleware is registered by class, never by instance, so the NestJS trick of
- *    `app.useGlobalInterceptors(new HttpLoggingInterceptor(config))` after
- *    `app.get(ConfigService)` has no counterpart.
- *  - `OpenApiModule` has `forRoot` only. There is no `forRootAsync`, unlike
- *    `LoggerModule`, `DbModule`, `RedisModule` and the rest, so the title,
- *    version and mount paths cannot come off `ConfigService`.
+ * `validateConfig` is a pure function of the environment, so calling it twice costs
+ * one extra zod parse at boot and cannot disagree with itself.
  *
- * `validateConfig` is a pure function of the environment, so calling it twice
- * costs one extra zod parse at boot and cannot disagree with itself.
+ * `OpenApiModule` used to be the other half of this. It has `forRootAsync` now, so
+ * the title, version, description and both mount paths come off `AppConfigService`
+ * like every other module's options - including the paths, which works because the
+ * controller declares its routes with thunks resolved at discovery, after every
+ * provider has settled.
  */
 const boot = validateConfig(Bun.env);
 
 const app = await HttpFactory.create(
-  OpenApiModule.forRoot({
-    title: boot.app.name,
-    version: boot.app.version,
-    description: boot.app.description,
+  OpenApiModule.forRootAsync({
     root: appModule(),
-    path: `/${boot.docs.path}`,
-    jsonPath: `/${boot.docs.jsonPath}`,
-    // Better Auth serves every one of its endpoints from one wildcard route, so
-    // route discovery sees none of them. This asks the library for its own schema
-    // and merges it in - a declared route wins a collision, and a missing
-    // `openAPI()` plugin costs documentation rather than the boot.
-    contribute: [authDocument(boot)],
+    useFactory: (config: AppConfigService) => {
+      const { app: meta, docs } = config.values;
+      return {
+        title: meta.name,
+        version: meta.version,
+        description: meta.description,
+        path: `/${docs.path}`,
+        jsonPath: `/${docs.jsonPath}`,
+        // Better Auth serves every one of its endpoints from one wildcard route, so
+        // route discovery sees none of them. This asks the library for its own
+        // schema and merges it in - a declared route wins a collision, and a missing
+        // `openAPI()` plugin costs documentation rather than the boot.
+        //
+        // Built from `boot`, not from the injected `Auth`, because
+        // `scripts`/openapi.config.ts shares this function and runs with no
+        // container at all. One contribution, two entrypoints.
+        contribute: [authDocument(boot)],
+      };
+    },
+    inject: [AppConfigService] as const,
   }),
   httpOptions(boot),
 );
@@ -55,6 +65,7 @@ const { app: appConfig, cors } = config.values;
 app.setGlobalPrefix(appConfig.prefix);
 app.set('trust proxy', cors.trustProxy);
 app.enableCors({ origin: cors.origin, credentials: config.get('isProd') });
+
 app.enableShutdownHooks();
 const cancelWatchdog = forceExitAfter();
 
@@ -76,6 +87,7 @@ logger.info(`${appConfig.name} listening`, {
   openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
   health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
   auth: `${url}${appConfig.prefix}${AUTH_MOUNT}`,
+  queues: `${url}queues`,
   websocket: app.gatewayPaths.map(
     (path) => `${url.replace('http', 'ws').replace(/\/$/, '')}${path}`,
   ),

@@ -7,7 +7,7 @@ import {
   PaginationDirection,
   PaginationOrder,
   type Page,
-} from '../core/pagination/page-options.dto.js';
+} from '@dunx/infra/pagination';
 import { CurrentUser, type Caller } from './services/current-user.service.js';
 
 /**
@@ -44,7 +44,7 @@ export class ProfileController {
   @ApiDoc({ tags: ['profile'], summary: 'Recent audit entries for the caller' })
   @Roles(UserRole.ADMIN)
   @Get('/audit')
-  entries(): Page<AuditLogEntry> {
+  entries(): Promise<Page<AuditLogEntry>> {
     return this.audit.list({
       order: PaginationOrder.DESC,
       direction: PaginationDirection.FORWARD,

@@ -1,10 +1,6 @@
 import { and, eq, like, or, type SQL } from 'drizzle-orm';
 import { SyncDatabase } from '@dunx/infra/db';
-import { PaginationFactory } from '../../core/pagination/pagination.factory.js';
-import type {
-  Page,
-  PageOptions,
-} from '../../core/pagination/page-options.dto.js';
+import { paginate, type Page, type PageOptions } from '@dunx/infra/pagination';
 import * as schema from '../../infra/db/schema.js';
 import {
   users,
@@ -19,14 +15,18 @@ export interface ListUsersFilters extends PageOptions {
 }
 
 /**
- * Every method is synchronous. The handle is `SyncDatabase`, which
+ * Every method is synchronous except `list`. The handle is `SyncDatabase`, which
  * `SyncSqliteOptions` binds, so `bun:sqlite` returns rows rather than promises.
+ *
+ * `list` is the exception because `paginate` is async, and it is async because
+ * drizzle's query builders are thenable on the synchronous `bun:sqlite` driver as
+ * well as on `Bun.SQL` - so one implementation in the framework serves both
+ * dialects. Verified against this app's own handle: awaiting a `SyncDatabase`
+ * builder returns rows and the cursor round-trips. The price is one `async` on
+ * three methods, which is cheaper than the keyset query living here.
  */
 export class UsersRepository {
-  constructor(
-    private readonly db: SyncDatabase<typeof schema>,
-    private readonly pagination: PaginationFactory,
-  ) {}
+  constructor(private readonly db: SyncDatabase<typeof schema>) {}
 
   findById(id: string): UserRow | undefined {
     return this.db.select().from(users).where(eq(users.id, id)).get();
@@ -63,7 +63,7 @@ export class UsersRepository {
     );
   }
 
-  list(filters: ListUsersFilters): Page<UserRow> {
+  list(filters: ListUsersFilters): Promise<Page<UserRow>> {
     const clauses: SQL[] = [];
     if (filters.role !== undefined) clauses.push(eq(users.role, filters.role));
     if (filters.banned !== undefined) {
@@ -75,12 +75,14 @@ export class UsersRepository {
       if (search !== undefined) clauses.push(search);
     }
 
-    return this.pagination.paginate<typeof users, UserRow>({
+    return paginate<typeof users, UserRow>({
+      db: this.db,
       table: users,
-      id: users.id,
-      sort: users.createdAt,
-      sortKey: 'createdAt',
       options: filters,
+      // Stated, not inferred. `paginate` defaults to the first of `updatedAt`,
+      // `createdAt`, `id` the table has, and this table has `updatedAt` - so
+      // leaving it out would silently re-sort the list by last modification.
+      orderBy: 'createdAt',
       where: clauses.length === 0 ? undefined : and(...clauses),
     });
   }

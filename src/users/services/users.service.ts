@@ -2,7 +2,7 @@ import { Auth } from '@dunx/auth';
 import { Logger } from '@dunx/core';
 import { JobPublisher } from '@dunx/infra/queue';
 import { HttpError, HttpStatusCode } from '@dunx/http';
-import type { Page } from '../../core/pagination/page-options.dto.js';
+import type { Page } from '@dunx/infra/pagination';
 import { JOBS, QUEUES } from '../../notifications/events/events.js';
 import type { CreateUser, SanitizedUser, UpdateUser } from '../dto/user.dto.js';
 import type { UserRow } from '../schema/user.schema.js';
@@ -30,8 +30,8 @@ export class UsersService {
     private readonly logger: Logger,
   ) {}
 
-  list(filters: ListUsersFilters): Page<SanitizedUser> {
-    const page = this.repo.list(filters);
+  async list(filters: ListUsersFilters): Promise<Page<SanitizedUser>> {
+    const page = await this.repo.list(filters);
     return { data: page.data.map(sanitize), meta: page.meta };
   }
 

@@ -5,7 +5,6 @@ import { AuditModule } from './audit/audit.module.js';
 import { AppConfigModule } from './config/app.config.module.js';
 import { AppConfigService } from './config/app.config.service.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
-import { PaginationModule } from './core/pagination/pagination.module.js';
 import { FilesFeatureModule } from './files/files.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
@@ -84,7 +83,6 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
   RedisCacheModule.forRoot(),
   StorageModule.forRoot(),
   ImagesConfigModule.forRoot(),
-  PaginationModule,
 ];
 
 export const appModule = (options: AppModuleOptions = {}): DynamicModule => ({

@@ -3,7 +3,7 @@ import { ApiDoc } from '@dunx/openapi';
 import { CurrentUser } from '../auth/services/current-user.service.js';
 import { Throttle } from '../core/decorators/throttle.decorator.js';
 import { UserRole } from '../users/schema/user.schema.js';
-import type { Page } from '../core/pagination/page-options.dto.js';
+import type { Page } from '@dunx/infra/pagination';
 import {
   linkFile,
   listFiles,
@@ -37,7 +37,7 @@ export class FilesController {
   @ApiDoc({ tags: ['files'], summary: 'List uploaded objects' })
   @Roles(UserRole.ADMIN, UserRole.USER)
   @Get('/', listFiles)
-  list(input: Input<typeof listFiles>): Page<FileMetadata> {
+  list(input: Input<typeof listFiles>): Promise<Page<FileMetadata>> {
     const caller = this.caller.require();
     // A non-admin sees only its own, and asking for `mine` is how an admin
     // narrows to the same view.

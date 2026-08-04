@@ -1,7 +1,7 @@
 import { betterAuthDocument } from '@dunx/auth';
 import { betterAuth } from 'better-auth';
 import type { AppConfig } from '../config/env.validation.js';
-import { AUTH_MOUNT, baseAuthOptions } from './auth.options.js';
+import { authBasePath, baseAuthOptions } from './auth.options.js';
 
 /**
  * Better Auth's own endpoints, contributed to the app's OpenAPI document.
@@ -29,20 +29,22 @@ import { AUTH_MOUNT, baseAuthOptions } from './auth.options.js';
  * `baseAuthOptions` is what keeps the document and the running API from drifting.
  */
 /**
- * ## Why `basePath` here is the mount, not `AuthOptions.basePath`
+ * ## `basePath` is the full path the handler answers on, prefix included
  *
- * `AuthDocumentOptions.basePath` is documented as "Where the handler is mounted.
- * Matches `AuthOptions.basePath`", which under `setGlobalPrefix('api')` is
- * `/api/auth`. Passing that produces **`/api/api/auth/sign-in/email`**: the
- * contributed paths go through the explorer's own mount prefixing along with the
- * declared routes, so the prefix is applied twice and nothing warns.
+ * So it is `AuthOptions.basePath` - `/api/auth` under `setGlobalPrefix('api')` - and
+ * not the `/auth` mount.
  *
- * Passing the mount instead - `/auth`, the second argument to
- * `AuthModule.forRootAsync` - lets the explorer add the one prefix, and the paths
- * come out at `/api/auth/...` where the handler actually answers. With no global
- * prefix the two are the same string and either works.
+ * This used to be the other way round, to work around a defect: contributed paths
+ * went through the explorer's mount prefixing along with the declared routes, so
+ * passing the real `basePath` produced `/api/api/auth/sign-in/email` and nothing
+ * warned. Passing the mount cancelled one of the two prefixes out.
+ *
+ * dunx 0.8.0 fixed it at the source. A contributor's paths describe endpoints dunx
+ * does not route, so `withPrefix` now treats them as **absolute** and leaves them
+ * alone. That makes the workaround the bug: passing `/auth` now documents the whole
+ * authentication surface at `/auth/...`, where nothing answers.
  */
 export const authDocument = (config: AppConfig) =>
   betterAuthDocument(betterAuth(baseAuthOptions(config)), {
-    basePath: AUTH_MOUNT,
+    basePath: authBasePath(config.app.prefix),
   });

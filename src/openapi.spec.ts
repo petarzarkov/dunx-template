@@ -217,33 +217,35 @@ describe('the generated OpenAPI document', () => {
   });
 
   /**
-   * Locks in a real gap.
+   * This was a KNOWN GAP and is now closed, so the test is inverted rather than
+   * deleted - a regression here is invisible otherwise.
    *
-   * `@dunx/auth` mounts Better Auth's handler as five one-line wildcard routes,
-   * and route discovery documents them like any other: the document carries a
-   * literal path `/api/auth/*` with five operations, tagged with the internal
-   * class name `MountedAuthHandler` because the class has no `@ApiDoc`.
-   *
-   * `*` is not an OpenAPI path template, the five operations describe nothing, and
-   * they duplicate the surface `betterAuthDocument` describes properly two lines
-   * away. Nothing marks the mounted handler as undocumented, and there is no way
-   * for an app to exclude a controller from the document.
+   * `@dunx/auth` mounts Better Auth's handler as five one-line wildcard routes, and
+   * route discovery used to document them like any other: a literal path
+   * `/api/auth/*` carrying five operations tagged with the internal class name
+   * `MountedAuthHandler`, because the class has no `@ApiDoc`. `*` is not an OpenAPI
+   * path template, the operations described nothing, and they duplicated the surface
+   * `betterAuthDocument` describes properly.
    */
-  test('KNOWN GAP: the mounted auth handler is documented as a wildcard path', () => {
-    const wildcard = doc.paths['/api/auth/*'];
-    expect(wildcard).toBeDefined();
-    expect(Object.keys(wildcard ?? {}).sort()).toEqual([
-      'delete',
-      'get',
-      'patch',
-      'post',
-      'put',
-    ]);
-    expect(wildcard?.['get']?.['tags']).toEqual(['MountedAuthHandler']);
+  test('the mounted auth handler is no longer documented as a wildcard', () => {
+    expect(doc.paths['/api/auth/*']).toBeUndefined();
+    expect(Object.keys(doc.paths).filter((p) => p.includes('*'))).toEqual([]);
+    // And nothing is tagged with the internal class name any more.
+    const tags = Object.values(doc.paths)
+      .flatMap((methods) => Object.values(methods))
+      .flatMap(
+        (operation) => (operation['tags'] as string[] | undefined) ?? [],
+      );
+    expect(tags).not.toContain('MountedAuthHandler');
   });
 
-  test('the explorer renders a self-contained page', () => {
-    const page = app.get(OpenApiExplorer).page('api');
+  /**
+   * `page()` is async: the 456 KB explorer bundle lives behind `@dunx/openapi/ui`
+   * and is reached with `await import()`, so importing `@dunx/openapi` does not pull
+   * a React app in with it. It was synchronous before that split.
+   */
+  test('the explorer renders a self-contained page', async () => {
+    const page = await app.get(OpenApiExplorer).page('api');
     expect(page).toStartWith('<!doctype html>');
     // No external host: a strict CSP or an offline machine must still work.
     expect(page).not.toContain('https://cdn.');

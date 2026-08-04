@@ -10,7 +10,7 @@ import {
   type Input,
 } from '@dunx/http';
 import { ApiDoc } from '@dunx/openapi';
-import type { Page } from '../core/pagination/page-options.dto.js';
+import type { Page } from '@dunx/infra/pagination';
 import {
   createUser,
   listUsers,
@@ -39,7 +39,7 @@ export class UsersController {
   @ApiDoc({ tags: ['users'], summary: 'List users, keyset paginated' })
   @Roles(UserRole.ADMIN, UserRole.USER)
   @Get('/', listUsers)
-  list(input: Input<typeof listUsers>): Page<SanitizedUser> {
+  list(input: Input<typeof listUsers>): Promise<Page<SanitizedUser>> {
     return this.users.list(input.query);
   }
 

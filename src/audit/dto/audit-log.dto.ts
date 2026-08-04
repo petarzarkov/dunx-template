@@ -1,9 +1,6 @@
 import type { RouteSchemas } from '@dunx/http';
 import { z } from 'zod';
-import {
-  pageOf,
-  pageOptionsSchema,
-} from '../../core/pagination/page-options.dto.js';
+import { paginatedOf, pageOptionsSchema } from '../../core/pagination.dto.js';
 import { AuditAction } from '../schema/audit-log.schema.js';
 
 export const AuditLogEntry = z
@@ -28,7 +25,10 @@ export const AuditLogEntry = z
 
 export type AuditLogEntry = z.infer<typeof AuditLogEntry>;
 
-export const PaginatedAuditLog = pageOf(AuditLogEntry, 'PaginatedAuditLog');
+export const PaginatedAuditLog = paginatedOf(
+  AuditLogEntry,
+  'PaginatedAuditLog',
+);
 
 export const ListAuditQuery = pageOptionsSchema.extend({
   actorId: z.string().optional(),

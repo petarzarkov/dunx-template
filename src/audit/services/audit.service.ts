@@ -1,4 +1,4 @@
-import type { Page } from '../../core/pagination/page-options.dto.js';
+import type { Page } from '@dunx/infra/pagination';
 import type { AuditLogEntry } from '../dto/audit-log.dto.js';
 import type { AuditLogRow } from '../schema/audit-log.schema.js';
 import {
@@ -20,8 +20,8 @@ const present = (row: AuditLogRow): AuditLogEntry => ({
 export class AuditService {
   constructor(private readonly repo: AuditLogRepository) {}
 
-  list(filters: AuditFilters): Page<AuditLogEntry> {
-    const page = this.repo.list(filters);
+  async list(filters: AuditFilters): Promise<Page<AuditLogEntry>> {
+    const page = await this.repo.list(filters);
     return { data: page.data.map(present), meta: page.meta };
   }
 }

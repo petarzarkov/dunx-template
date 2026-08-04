@@ -7,21 +7,23 @@ ported feature for feature from
 Validated configuration, structured logging with request context, one log entry
 per request, health endpoints, prefixed REST controllers with zod validation and
 keyset pagination, SQLite through drizzle with migrations, seeds and audit
-triggers, a single error mapper, generated OpenAPI, unit / integration / e2e
-suites, Docker and CI.
+triggers, a single error mapper, an OpenAPI document and explorer served at
+runtime, unit / integration / e2e suites, Docker and CI.
 
 Plus every area that needs something running: **Better Auth** sessions with a
 global guard and roles, **BullMQ** queues with a separate worker process,
 **object storage** on local disk or S3, **image** processing on `Bun.Image`,
-**websocket** gateways with multi-node fan-out, and **Redis** caching and rate
-limiting.
+**websocket** gateways with multi-node fan-out, **Bull Board** at `/queues`, an
+outbound HTTP client with retries, and **Redis** caching and rate limiting.
 
 **None of it is required to be running.** An area whose service is absent reports
 that it is skipping and the app boots anyway: `bun run start`, `bun test` and
 `bun run test:e2e` all pass with nothing installed, and exercise the real thing
 when it is up. `/api/service/health` says which is which.
 
-`MAPPING.md` is the NestJS-to-dunx concept table.
+`MAPPING.md` is the NestJS-to-dunx concept table, including the two things it once
+listed as unportable and dunx has since shipped. `docs/env-vars.md` is every
+environment variable, generated from the schemas that validate them.
 
 ## Quick start
 
@@ -33,8 +35,9 @@ bun run start
 
 ```
 http://localhost:3001/api/service/health
-http://localhost:3001/api/docs
-http://localhost:3001/api/openapi.json
+http://localhost:3001/api/docs          the API explorer, served at runtime
+http://localhost:3001/api/openapi.json  the document, served at runtime
+http://localhost:3001/queues            Bull Board, admin only
 ws://localhost:3001/ws
 ```
 
@@ -51,15 +54,26 @@ TOKEN=$(curl -sD - -o /dev/null -X POST http://localhost:3001/api/auth/sign-in/e
 
 curl -H "authorization: Bearer $TOKEN" http://localhost:3001/api/users
 curl -H "authorization: Bearer $TOKEN" -F file=@some.png http://localhost:3001/api/files
-curl -H "authorization: Bearer $TOKEN" http://localhost:3001/api/queues
+# Bull Board is a page, not JSON - open it in a browser with the session cookie,
+# or see it 404 without one, which is deliberate.
+curl -o /dev/null -w '%{http_code}\n' http://localhost:3001/queues
 ```
 
 ### With the services up
 
 ```bash
-docker compose -f docker-compose.services.yml up -d   # valkey and minio
+docker compose up -d                                  # valkey, and only valkey
 REDIS_URL=redis://localhost:6379 bun run start
 REDIS_URL=redis://localhost:6379 bun run worker       # a second process
+```
+
+The compose file starts **backing services only**. The app and the worker are not
+services in it: `bun --watch src/main.ts` is a better development loop than a
+container, and the `Dockerfile` is for deploying, which is a different job. MinIO is
+behind a profile, so a plain `up` is Redis on its own:
+
+```bash
+docker compose --profile s3 up -d                     # valkey, minio, and a bucket
 ```
 
 The cache, the rate limiter, the queue and websocket fan-out across nodes all go
@@ -70,22 +84,23 @@ changes.
 
 ## Scripts
 
-| Script                | What it does                                                     |
-| --------------------- | ---------------------------------------------------------------- |
-| `bun run dev`         | `bun --watch src/main.ts`                                        |
-| `bun run start`       | `bun src/main.ts`, the shape the Dockerfile uses                 |
-| `bun run worker`      | `bun src/worker.ts`, the queue consumer. A second process        |
-| `bun run build`       | `Bun.build` with `depsPlugin` into `dist/`; `start:dist` runs it |
-| `bun run typecheck`   | `tsc --noEmit`                                                   |
-| `bun run lint`        | oxlint, fixing in place. `lint:check` does not fix               |
-| `bun run format`      | oxfmt. `format:check` does not write                             |
-| `bun test`            | unit (`*.test.ts`) and integration (`*.spec.ts`) under `src/`    |
-| `bun run test:e2e`    | spawns a real server and drives it over HTTP                     |
-| `bun run mig:gen`     | `drizzle-kit generate`                                           |
-| `bun run mig:run`     | applies migrations without booting the app                       |
-| `bun run seed`        | migrate, apply triggers, then `runSeeds`                         |
-| `bun run db:drop`     | deletes the SQLite file and its WAL sidecars                     |
-| `bun run gen:openapi` | writes `openapi.json` with no container and no server            |
+| Script                 | What it does                                                                                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun run dev`          | `bun --watch src/main.ts`                                                                                                                                                     |
+| `bun run start`        | `bun src/main.ts`, the shape the Dockerfile uses                                                                                                                              |
+| `bun run worker`       | `bun src/worker.ts`, the queue consumer. A second process                                                                                                                     |
+| `bun run build`        | `Bun.build` with `depsPlugin` into `dist/`; `start:dist` runs it                                                                                                              |
+| `bun run typecheck`    | `tsc --noEmit`                                                                                                                                                                |
+| `bun run lint`         | oxlint, fixing in place. `lint:check` does not fix                                                                                                                            |
+| `bun run format`       | oxfmt. `format:check` does not write                                                                                                                                          |
+| `bun test`             | unit (`*.test.ts`) and integration (`*.spec.ts`) under `src/`                                                                                                                 |
+| `bun run test:e2e`     | spawns a real server and drives it over HTTP                                                                                                                                  |
+| `bun run mig:gen`      | `drizzle-kit generate`                                                                                                                                                        |
+| `bun run mig:run`      | applies migrations without booting the app                                                                                                                                    |
+| `bun run seed`         | migrate, apply triggers, then `runSeeds`                                                                                                                                      |
+| `bun run db:drop`      | deletes the SQLite file and its WAL sidecars                                                                                                                                  |
+| `bun run gen:openapi`  | exports `openapi.json` with no container and no server. The app serves the document itself at `/api/openapi.json`; this is for committing the contract and for client codegen |
+| `bun run gen:env:docs` | regenerates `docs/env-vars.md` from the zod env schemas                                                                                                                       |
 
 ## Layout
 
@@ -102,12 +117,11 @@ src/
     decorators/              @Throttle, over @dunx/http's own metadata mechanism
     force-exit.ts            the shutdown watchdog, and why it exists
     middlewares/             the audit-actor stamp, read from AuthContext
-    pagination/              keyset cursors, no offsets
   auth/                      Better Auth: options, module, schema, profile, admin seeder
   infra/
     db/                      schema, columns, migrations, triggers, seeds, DbModule wiring
     redis/                   RedisModule, the cache and the rate-limit guard
-    queue/                   QueueModule and the queue dashboard routes
+    queue/                   QueueModule, and Bull Board mounted at /queues
     files/                   StorageModule: local disk or S3, selected by config
     images/                  ImagesModule over Bun.Image
     health/                  liveness, readiness per area, build info
