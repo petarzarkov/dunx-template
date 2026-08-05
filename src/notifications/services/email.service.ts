@@ -1,5 +1,5 @@
-import { inject, Logger } from '@dunx/core';
-import { httpClient } from '@dunx/http/client';
+import { Logger } from '@dunx/core';
+import { HttpService } from '@dunx/http/client';
 import { AppConfigService } from '../../config/app.config.service.js';
 
 export interface Email {
@@ -34,21 +34,15 @@ export interface Email {
  * three attempts, exponential backoff. That layering is deliberate: a 503 from the
  * provider is worth two quick retries before spending a whole job attempt on it.
  *
- * ## Why `inject()` rather than a constructor parameter
- *
- * A named client is bound to `httpClient('email')`, which is a `Token` and not a
- * class - so it cannot be a constructor parameter type, because there would be no
- * type name for `@dunx/transform` to record. `inject()` in a field initialiser is
- * the documented escape hatch for exactly that.
- *
- * Registered by name rather than as the default: `HttpModule.forRoot()` would claim
- * the app's one unnamed `HttpService`, and the first upstream an app happens to call
- * should not squat on it.
+ * `HttpService` is a plain constructor dependency, like everything else in this app.
+ * `HttpModule` can also register a *named* client, which is bound to
+ * `httpClient(name)` - a `Token`, not a class, so it has to be reached with
+ * `inject()` in a field initialiser. That is the shape for an app calling several
+ * upstreams; this one calls a single webhook, so it does not pay for it.
  */
 export class EmailService {
-  readonly #http = inject(httpClient('email'));
-
   constructor(
+    private readonly http: HttpService,
     private readonly config: AppConfigService,
     private readonly logger: Logger,
   ) {}
@@ -65,7 +59,7 @@ export class EmailService {
       return;
     }
 
-    await this.#http.post(webhookUrl, email, {
+    await this.http.post(webhookUrl, email, {
       timeoutMs,
       flow: 'email.send',
       retry: { maxRetries },

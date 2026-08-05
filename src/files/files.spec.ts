@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Images } from '@dunx/infra/images';
 import { createTestServer, type TestServer } from '@dunx/testing';
-import { appModule } from '../app.module.js';
+import { AppModule } from '../app.module.js';
 import { validateConfig } from '../config/env.validation.js';
 import { httpOptions } from '../http.options.js';
 import { bearer, signIn, signUp } from '../test-support/session.js';
@@ -62,7 +62,7 @@ beforeAll(async () => {
   };
 
   server = await createTestServer({
-    modules: [appModule({ source, logLevel: 'fatal' })],
+    modules: [AppModule.forRoot({ source, logLevel: 'fatal' })],
     prefix: 'api',
     ...httpOptions(validateConfig(source)),
     requestLogging: false,

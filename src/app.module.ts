@@ -23,23 +23,6 @@ export interface AppModuleOptions {
 }
 
 /**
- * Deliberately **not** decorated with `@Module`.
- *
- * A `DynamicModule` naming a class that also carries `@Module` metadata gets the
- * two option sets *unioned*, not overridden, so
- * `@Module({ imports: [ConfigModule.forRoot(prod)] })` plus a
- * `static forTest(): DynamicModule` returning `imports: [ConfigModule.forRoot(test)]`
- * registers `ConfigModule` twice. dunx's container is flat and one binding per
- * token, so that is a hard boot failure:
- *
- *   AppError: Duplicate binding for ConfigInput: bound by module "ConfigModule"
- *   and module "ConfigModule". The container is flat - one binding per token.
- *
- * A bare class plus one factory keeps a single import list and dodges it.
- */
-export class AppModule {}
-
-/**
  * Everything shared by the web process and the worker: config, logging, the
  * database, storage, images, Redis and the queue's publish side.
  *
@@ -85,21 +68,40 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
   ImagesConfigModule.forRoot(),
 ];
 
-export const appModule = (options: AppModuleOptions = {}): DynamicModule => ({
-  module: AppModule,
-  imports: [
-    ...foundation(options),
-    QueuesModule.forRoot(),
-    // After DatabaseModule, so better-auth reuses the connection it opened.
-    AccountsModule.forRoot(),
-    NotificationsModule.forRoot({ publisher: 'socket' }),
-    HealthModule,
-    UsersModule,
-    FilesFeatureModule.forRoot(),
-    AuditModule,
-  ],
-  providers: [AuditContextMiddleware],
-});
+/**
+ * The web process's graph.
+ *
+ * **Undecorated, with a static factory** - the same shape every configurable module
+ * in dunx uses, `DbModule.forRoot()` and `QueueModule.forRootAsync()` included. It
+ * must not *also* carry `@Module`: `resolveRef` in `@dunx/core` concatenates a
+ * `DynamicModule`'s options with any decorator metadata on the class it names rather
+ * than overriding them, so declaring both registers every import twice and boot dies
+ * naming the same module on both sides of a duplicate binding:
+ *
+ *   AppError: Duplicate binding for ConfigInput: bound by module "ConfigModule"
+ *   and module "ConfigModule". The container is flat - one binding per token.
+ *
+ * Decorate or configure, never both.
+ */
+export class AppModule {
+  static forRoot(options: AppModuleOptions = {}): DynamicModule {
+    return {
+      module: AppModule,
+      imports: [
+        ...foundation(options),
+        QueuesModule.forRoot(),
+        // After DatabaseModule, so better-auth reuses the connection it opened.
+        AccountsModule.forRoot(),
+        NotificationsModule.forRoot({ publisher: 'socket' }),
+        HealthModule,
+        UsersModule,
+        FilesFeatureModule.forRoot(),
+        AuditModule,
+      ],
+      providers: [AuditContextMiddleware],
+    };
+  }
+}
 
 /**
  * The consuming half. A worker is its own container: it builds only what a handler
@@ -109,16 +111,16 @@ export const appModule = (options: AppModuleOptions = {}): DynamicModule => ({
  * `QueuesModule` without its controller, because there are no routes to serve, and
  * no `AccountsModule` because a job has no caller.
  */
-export class WorkerModule {}
-
-export const workerModule = (
-  options: AppModuleOptions = {},
-): DynamicModule => ({
-  module: WorkerModule,
-  imports: [
-    ...foundation(options),
-    QueuesModule.forRoot({ controllers: false }),
-    NotificationsModule.forRoot({ publisher: 'relay' }),
-    FilesFeatureModule.forRoot({ controllers: false }),
-  ],
-});
+export class WorkerModule {
+  static forRoot(options: AppModuleOptions = {}): DynamicModule {
+    return {
+      module: WorkerModule,
+      imports: [
+        ...foundation(options),
+        QueuesModule.forRoot({ controllers: false }),
+        NotificationsModule.forRoot({ publisher: 'relay' }),
+        FilesFeatureModule.forRoot({ controllers: false }),
+      ],
+    };
+  }
+}

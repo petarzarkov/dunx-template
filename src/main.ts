@@ -1,7 +1,7 @@
 import { Logger } from '@dunx/core';
 import { HttpFactory } from '@dunx/http';
 import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
-import { appModule } from './app.module.js';
+import { AppModule } from './app.module.js';
 import { authDocument } from './auth/auth.document.js';
 import { AUTH_MOUNT } from './auth/auth.options.js';
 import { AppConfigService } from './config/app.config.service.js';
@@ -31,7 +31,7 @@ const boot = validateConfig(Bun.env);
 
 const app = await HttpFactory.create(
   OpenApiModule.forRootAsync({
-    root: appModule(),
+    root: AppModule.forRoot(),
     useFactory: (config: AppConfigService) => {
       const { app: meta, docs } = config.values;
       return {
@@ -87,7 +87,7 @@ logger.info(`${appConfig.name} listening`, {
   openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
   health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
   auth: `${url}${appConfig.prefix}${AUTH_MOUNT}`,
-  queues: `${url}queues`,
+  queues: `${url}${appConfig.prefix}/queues`,
   websocket: app.gatewayPaths.map(
     (path) => `${url.replace('http', 'ws').replace(/\/$/, '')}${path}`,
   ),

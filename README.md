@@ -13,7 +13,7 @@ runtime, unit / integration / e2e suites, Docker and CI.
 Plus every area that needs something running: **Better Auth** sessions with a
 global guard and roles, **BullMQ** queues with a separate worker process,
 **object storage** on local disk or S3, **image** processing on `Bun.Image`,
-**websocket** gateways with multi-node fan-out, **Bull Board** at `/queues`, an
+**websocket** gateways with multi-node fan-out, admin-only **queue routes**, an
 outbound HTTP client with retries, and **Redis** caching and rate limiting.
 
 **None of it is required to be running.** An area whose service is absent reports
@@ -21,9 +21,10 @@ that it is skipping and the app boots anyway: `bun run start`, `bun test` and
 `bun run test:e2e` all pass with nothing installed, and exercise the real thing
 when it is up. `/api/service/health` says which is which.
 
-`MAPPING.md` is the NestJS-to-dunx concept table, including the two things it once
-listed as unportable and dunx has since shipped. `docs/env-vars.md` is every
-environment variable, generated from the schemas that validate them.
+`MAPPING.md` is the NestJS-to-dunx concept table, including the one thing it listed as
+unportable that turned out not to be, and the one that came back and left again.
+`docs/env-vars.md` is every environment variable, generated from the schemas that
+validate them.
 
 ## Quick start
 
@@ -37,7 +38,7 @@ bun run start
 http://localhost:3001/api/service/health
 http://localhost:3001/api/docs          the API explorer, served at runtime
 http://localhost:3001/api/openapi.json  the document, served at runtime
-http://localhost:3001/queues            Bull Board, admin only
+http://localhost:3001/api/queues        queue depth and job inspection, admin only
 ws://localhost:3001/ws
 ```
 
@@ -54,17 +55,25 @@ TOKEN=$(curl -sD - -o /dev/null -X POST http://localhost:3001/api/auth/sign-in/e
 
 curl -H "authorization: Bearer $TOKEN" http://localhost:3001/api/users
 curl -H "authorization: Bearer $TOKEN" -F file=@some.png http://localhost:3001/api/files
-# Bull Board is a page, not JSON - open it in a browser with the session cookie,
-# or see it 404 without one, which is deliberate.
-curl -o /dev/null -w '%{http_code}\n' http://localhost:3001/queues
+curl -H "authorization: Bearer $TOKEN" http://localhost:3001/api/queues
 ```
 
 ### With the services up
 
 ```bash
-docker compose up -d                                  # valkey, and only valkey
-REDIS_URL=redis://localhost:6379 bun run start
-REDIS_URL=redis://localhost:6379 bun run worker       # a second process
+docker compose up -d          # valkey, and only valkey
+bun run dev                   # nothing to configure
+bun run worker                # the consumer, in a second terminal
+```
+
+**`REDIS_URL` is not needed for a local broker.** `Bun.RedisClient` resolves
+`$VALKEY_URL`, then `$REDIS_URL`, then `valkey://localhost:6379` on its own, so a
+container published on the default port is found with the variable left commented out
+in `.env` - which is why `/api/service/health` moves every area to `up` without it.
+Set it when the broker is somewhere else:
+
+```bash
+REDIS_URL=redis://user:pass@broker.internal:6379 bun run start
 ```
 
 The compose file starts **backing services only**. The app and the worker are not
@@ -109,7 +118,7 @@ src/
   main.ts                    bootstrap: create, configure, listen
   worker.ts                  the queue consumer, a container with no server
   http.options.ts            the HttpOptions, shared with the test suites
-  app.module.ts              both module graphs: appModule() and workerModule()
+  app.module.ts              both graphs: AppModule.forRoot() and WorkerModule.forRoot()
   constants.ts               route segments and the websocket path
   config/                    zod env schemas, validateConfig, AppConfigService
   core/
@@ -121,7 +130,7 @@ src/
   infra/
     db/                      schema, columns, migrations, triggers, seeds, DbModule wiring
     redis/                   RedisModule, the cache and the rate-limit guard
-    queue/                   QueueModule, and Bull Board mounted at /queues
+    queue/                   QueueModule and the admin-only queue routes
     files/                   StorageModule: local disk or S3, selected by config
     images/                  ImagesModule over Bun.Image
     health/                  liveness, readiness per area, build info

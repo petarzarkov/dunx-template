@@ -1,6 +1,6 @@
 import { Logger } from '@dunx/core';
 import { WorkerFactory } from '@dunx/infra/queue';
-import { workerModule } from './app.module.js';
+import { WorkerModule } from './app.module.js';
 import { forceExitAfter } from './core/force-exit.js';
 
 /**
@@ -16,7 +16,7 @@ import { forceExitAfter } from './core/force-exit.js';
  * and it fails loudly: unlike the web process, a worker that cannot reach its
  * broker has nothing left to do.
  */
-const worker = await WorkerFactory.create(workerModule());
+const worker = await WorkerFactory.create(WorkerModule.forRoot());
 const logger = worker.get(Logger);
 
 logger.info('worker starting', { queues: worker.queues });

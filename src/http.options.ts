@@ -1,6 +1,5 @@
 import { SessionGuard } from '@dunx/auth';
 import { RedisRelay, type HttpOptions } from '@dunx/http';
-import { QueueDashboardMiddleware } from '@dunx/queue-dashboard';
 import { SERVICE_ROUTES } from './constants.js';
 import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
@@ -19,34 +18,36 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
   const servicePath = `/${config.app.prefix}/${SERVICE_ROUTES.BASE}`;
   return {
     /**
-     * Outermost first, after the built-in request logger. A guard is middleware
-     * that throws, so ordering is the only thing that decides which runs first.
-     *
-     * **`QueueDashboardMiddleware` leads, ahead of `SessionGuard`, and that is
-     * load-bearing.** Behind the guard, an anonymous request for `/queues` gets a
-     * 401 - which tells an unauthenticated caller there is something at that path
-     * worth authenticating for, and the whole point of the package answering 404
-     * is not to. Measured: with it registered last, both anonymous and
-     * bad-session requests came back 401 rather than 404.
-     *
-     * Putting it first is safe because its `authorize` asks better-auth for the
-     * session itself rather than reading the `AuthContext` that `SessionGuard`
-     * writes - see queue-dashboard.module.ts. It also means the board's paths do
-     * not pay for the throttler or the audit stamp, which is what the package
-     * intends by taking a function rather than a list of guards.
-     *
-     * `SessionGuard` then leads the rest, because everything after it wants to
-     * know who is calling: it runs the remainder of the chain inside
-     * `AuthContext`, so the throttler can count per user and the audit stamp can
-     * name one.
+     * Outermost first, after the built-in request logger. `SessionGuard` leads
+     * because everything after it wants to know who is calling: it runs the rest of
+     * the chain inside `AuthContext`, so the throttler can count per user and the
+     * audit stamp can name one. A guard is middleware that throws, so ordering is the
+     * only thing that decides which runs first.
      */
-    middleware: [
-      QueueDashboardMiddleware,
-      SessionGuard,
-      ThrottleGuard,
-      AuditContextMiddleware,
-    ],
+    middleware: [SessionGuard, ThrottleGuard, AuditContextMiddleware],
     onError: errorMapper,
+    /**
+     * A path that matched nothing answers **404**, not the session guard's 401.
+     *
+     * `@dunx/http` defaults to `'guarded'`, which gives the miss no route metadata
+     * so a global guard refuses it - on the reasoning that a 404 on a miss while
+     * every real path answers 401 tells a prober which paths exist. That default is
+     * deliberate upstream and this opts out of it, for two reasons:
+     *
+     *  - **It is actively misleading.** `GET /api/queue` - a typo for `/api/queues` -
+     *    answered `401 UNAUTHENTICATED`, which says "log in" when the truth is "no
+     *    such route". That cost real debugging time.
+     *  - **It puts a session lookup on every miss.** `SessionGuard` calls
+     *    better-auth's `getSession` before it can refuse, so each unmatched request
+     *    costs a database round trip. Anyone spraying random paths gets that
+     *    amplification for free, which is a worse exposure than the enumeration the
+     *    default is protecting against - this API's route table is in a public
+     *    OpenAPI document at `/api/docs` anyway.
+     *
+     * The miss is still logged and still gets a request id: the fallback runs the
+     * global middleware either way, which is the whole reason it exists.
+     */
+    notFound: 'public',
     requestLogging: {
       requestBody: config.log.requestBody,
       responseBody: config.log.responseBody,

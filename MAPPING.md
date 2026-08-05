@@ -65,19 +65,19 @@ Every row is something the NestJS template does and what replaced it here.
 
 ## Authentication
 
-| NestJS                                                        | dunx                                                                                                                                                |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@thallesp/nestjs-better-auth` `AuthModule.forRootAsync`      | `AuthModule.forRootAsync({ useFactory, inject }, '/auth')` from `@dunx/auth`. The second argument is the mount - see below.                         |
-| the package's global `AuthGuard`                              | `SessionGuard`, listed in `HttpOptions.middleware`. It is a provider, so `@UseGuards(SessionGuard)` on one controller also works.                   |
-| `drizzleAdapter(db, { provider, schema })` by hand            | `drizzleDatabase(connection, { schema })` from `@dunx/auth/drizzle`. `provider` comes from the connection's own dialect.                            |
-| `req.user`, `@CurrentUser()`                                  | `AuthContext`, an `AsyncLocalStorage`. `src/auth/services/current-user.service.ts` wraps it. No parameter decorator exists.                         |
-| `@Public()` / `AllowAnonymous`                                | same name, from `@dunx/http`. Better Auth's own handler carries it at class scope, which is what makes sign-in reachable.                           |
-| `@Roles(...)` reading the `admin()` plugin's `role`           | same name, same source. `SessionGuard` reads it; `@dunx/openapi` reads the same metadata for `x-required-roles`.                                    |
-| custom `bunBcryptPassword`                                    | `bunPassword`, which `AuthModule` applies by default when `emailAndPassword` is on.                                                                 |
-| `RedisService` as `secondaryStorage`                          | `redisStorage(connection)`. Opt in with `AUTH_SESSION_STORE=redis`: it deliberately does not degrade.                                               |
-| `mergeBetterAuthSchema` in `setupDocs.ts`                     | `betterAuthDocument(auth, { basePath })` passed to `OpenApiModule.forRoot({ contribute })`. A declared route wins a collision.                      |
-| `@ApiAuth()` Swagger marker                                   | nothing to add. `@Roles`/`@Public` already produce the security requirement.                                                                        |
-| `HtmlSessionAuthMiddleware` over the docs and dashboard pages | Half. The dashboard takes an `authorize(request)` that asks better-auth for the session and 404s a non-admin; the explorer is still not behind one. |
+| NestJS                                                        | dunx                                                                                                                              |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `@thallesp/nestjs-better-auth` `AuthModule.forRootAsync`      | `AuthModule.forRootAsync({ useFactory, inject }, '/auth')` from `@dunx/auth`. The second argument is the mount - see below.       |
+| the package's global `AuthGuard`                              | `SessionGuard`, listed in `HttpOptions.middleware`. It is a provider, so `@UseGuards(SessionGuard)` on one controller also works. |
+| `drizzleAdapter(db, { provider, schema })` by hand            | `drizzleDatabase(connection, { schema })` from `@dunx/auth/drizzle`. `provider` comes from the connection's own dialect.          |
+| `req.user`, `@CurrentUser()`                                  | `AuthContext`, an `AsyncLocalStorage`. `src/auth/services/current-user.service.ts` wraps it. No parameter decorator exists.       |
+| `@Public()` / `AllowAnonymous`                                | same name, from `@dunx/http`. Better Auth's own handler carries it at class scope, which is what makes sign-in reachable.         |
+| `@Roles(...)` reading the `admin()` plugin's `role`           | same name, same source. `SessionGuard` reads it; `@dunx/openapi` reads the same metadata for `x-required-roles`.                  |
+| custom `bunBcryptPassword`                                    | `bunPassword`, which `AuthModule` applies by default when `emailAndPassword` is on.                                               |
+| `RedisService` as `secondaryStorage`                          | `redisStorage(connection)`. Opt in with `AUTH_SESSION_STORE=redis`: it deliberately does not degrade.                             |
+| `mergeBetterAuthSchema` in `setupDocs.ts`                     | `betterAuthDocument(auth, { basePath })` passed to `OpenApiModule.forRoot({ contribute })`. A declared route wins a collision.    |
+| `@ApiAuth()` Swagger marker                                   | nothing to add. `@Roles`/`@Public` already produce the security requirement.                                                      |
+| `HtmlSessionAuthMiddleware` over the docs and dashboard pages | **no equivalent.** The explorer is not behind a session; the queue routes are `@Roles('admin')` instead.                          |
 
 **The `basePath` and `mountAt` split is the one thing to get right.** Under
 `setGlobalPrefix('api')` the handler is a route at `/auth` while better-auth
@@ -87,15 +87,15 @@ boot error rather than a 404 at runtime.
 
 ## Queues
 
-| NestJS                                                       | dunx                                                                                                            |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `BullModule.forRootAsync` + `registerQueue`                  | `QueueModule.forRootAsync`. A queue is a key prefix, so there is nothing to register - `publisher.queue(name)`. |
-| `@Processor` class + `WorkerHost`                            | `@JobHandler({ queue, name })` on a method of any provider. No class decorator, no base class.                  |
-| the template's own `JobDispatcher` + `job.processor.ts` fork | `WorkerFactory.create(workerModule())` in `src/worker.ts`. A worker is its own container, not a fork.           |
-| `JobPublisherService`                                        | `JobPublisher`, which returns bullmq's own `Queue` rather than wrapping it.                                     |
-| `ioredis` connection options                                 | a URL. `@dunx/infra/queue` runs bullmq's `createBunRedisClient` over `Bun.RedisClient`.                         |
-| `@bull-board/express` at `/api/queues`                       | `QueueDashboardModule` from `@dunx/queue-dashboard`, at `/queues`. The real Bull Board, over `Bun.serve`.       |
-| `runWithTimeout(jobTimeoutMs)` in the dispatcher             | `jobTimeoutMs` on `QueueOptions`.                                                                               |
+| NestJS                                                       | dunx                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BullModule.forRootAsync` + `registerQueue`                  | `QueueModule.forRootAsync`. A queue is a key prefix, so there is nothing to register - `publisher.queue(name)`.                                                                                                                          |
+| `@Processor` class + `WorkerHost`                            | `@JobHandler({ queue, name })` on a method of any provider. No class decorator, no base class.                                                                                                                                           |
+| the template's own `JobDispatcher` + `job.processor.ts` fork | `WorkerFactory.create(workerModule())` in `src/worker.ts`. A worker is its own container, not a fork.                                                                                                                                    |
+| `JobPublisherService`                                        | `JobPublisher`, which returns bullmq's own `Queue` rather than wrapping it.                                                                                                                                                              |
+| `ioredis` connection options                                 | a URL. `@dunx/infra/queue` runs bullmq's `createBunRedisClient` over `Bun.RedisClient`.                                                                                                                                                  |
+| `@bull-board/express` at `/api/queues`                       | **no equivalent for the page, again.** `@dunx/queue-dashboard` served the real Bull Board for one release and was deleted; `src/infra/queue/queues.controller.ts` serves the same data as admin-only JSON until `@dunx/dashboard` ships. |
+| `runWithTimeout(jobTimeoutMs)` in the dispatcher             | `jobTimeoutMs` on `QueueOptions`.                                                                                                                                                                                                        |
 
 ## Files, images and storage
 
@@ -131,9 +131,9 @@ boot error rather than a 404 at runtime.
 
 ## Deliberately not ported
 
-Four things, each for a reason that is not "it needs a service running". There were
-six; **two came back**, and both because a dunx release closed the gap rather than
-because the judgement was wrong at the time.
+Five things, each for a reason that is not "it needs a service running". There were
+six; keyset pagination came back for good, and Bull Board's page came back and then
+left again - see below.
 
 | Not ported                           | Why                                                                                                                                                                                                                                                                                    |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,17 +145,22 @@ because the judgement was wrong at the time.
 
 ## The two that came back
 
-**Bull Board's page.** The judgement was that Bull Board is an Express-mounted React
-application and `Bun.serve` is not Express, so what was portable was the _data_ -
-counts, one job, retry, drain - and `/api/queues` served that as admin-only JSON.
+**Bull Board's page - and then it went away again.** The judgement was that Bull Board
+is an Express-mounted React application and `Bun.serve` is not Express, so what was
+portable was the _data_ - counts, one job, retry, drain - and `/api/queues` served that
+as admin-only JSON.
 
-That was wrong about the hard part. bull-board's `IServerAdapter` is a **sink**: it
-pushes its routes, its view path, its static path, an error handler and its UI config
-in, and the adapter answers requests from them. Implementing it over `Bun.serve` is
-about a page of code, which is what `@dunx/queue-dashboard` is. The JSON controller is
-deleted rather than kept alongside - it was a reimplementation of a page that now
-exists, and an admin endpoint that enqueues an arbitrary job by name is not worth
-keeping for its own sake.
+That was wrong about the hard part. bull-board's `IServerAdapter` is a **sink**, so
+implementing it over `Bun.serve` is about a page of code, and `@dunx/queue-dashboard`
+did exactly that: the real UI, its static assets streamed from `Bun.file`, no template
+engine.
+
+**It has since been deleted from dunx and from npm**, because a queue-only dashboard is
+the wrong unit for a framework - the replacement is one page over routes, the provider
+graph, the queues and runtime health, designed but not built. So this row is back where
+it started, and the JSON controller is back with it. The lesson is not "the original
+judgement was right" - the page was portable, and that stands - it is that **being
+right about the mechanism is not the same as being right about the scope.**
 
 **Keyset pagination.** Never in this table, but it was ~200 lines of this app's own
 code and it is now `@dunx/infra/pagination`. The framework's version fixed three
