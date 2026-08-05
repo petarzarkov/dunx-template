@@ -30,14 +30,11 @@
     "gen:env:docs": "bun ./scripts/gen-env-docs.ts"
   },
   "dependencies": {
-    "@bull-board/api": "^8.5.0",
-    "@bull-board/ui": "^8.5.0",
     "@dunx/auth": "^0.8.0",
     "@dunx/core": "^0.8.0",
     "@dunx/http": "^0.8.0",
     "@dunx/infra": "^0.8.0",
     "@dunx/openapi": "^0.8.0",
-    "@dunx/queue-dashboard": "^0.8.0",
     "@dunx/transform": "^0.8.0",
     "better-auth": "^1.6.25",
     "bullmq": "^6.0.5",

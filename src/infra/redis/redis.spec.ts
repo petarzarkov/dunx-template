@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createTestServer, type TestServer } from '@dunx/testing';
-import { appModule } from '../../app.module.js';
+import { AppModule } from '../../app.module.js';
 import { validateConfig } from '../../config/env.validation.js';
 import { httpOptions } from '../../http.options.js';
 import { bearer, signIn } from '../../test-support/session.js';
@@ -27,7 +27,7 @@ const base = (over: Record<string, string>): Record<string, string> => ({
 
 const boot = async (source: Record<string, string>): Promise<TestServer> =>
   createTestServer({
-    modules: [appModule({ source, logLevel: 'fatal' })],
+    modules: [AppModule.forRoot({ source, logLevel: 'fatal' })],
     prefix: 'api',
     ...httpOptions(validateConfig(source)),
     requestLogging: false,
@@ -81,22 +81,17 @@ describe('with a broker that will not answer', () => {
     expect(body.degraded['queue']?.status).toBe('degraded');
   });
 
-  /**
-   * The board's *page* does not need the broker: bull-board renders its shell and
-   * the browser then asks for the queue data separately, so an unreachable Redis
-   * costs the numbers rather than the page. This used to assert a 503 from a
-   * `QueuesController` this app wrote, which no longer exists.
-   *
-   * Answering at all is the assertion, and answering promptly is half of it - a
-   * dashboard that hangs on a dead broker is worse than one that shows zeroes.
-   */
-  test('the queue dashboard still serves its page with no broker', async () => {
+  test('the queue routes answer 503 rather than hanging', async () => {
     const started = Bun.nanoseconds();
-    const response = await server.request('queues', { headers: bearer(token) });
+    const { status, body } = await server.json<{ message: string }>(
+      'api/queues',
+      { headers: bearer(token) },
+    );
     const elapsedMs = (Bun.nanoseconds() - started) / 1e6;
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain('id="root"');
+    expect(status).toBe(503);
+    expect(body.message).toStartWith('Queue unavailable');
+    // A degraded route has to answer, and answering slowly is worse than 503.
     expect(elapsedMs).toBeLessThan(5000);
   });
 

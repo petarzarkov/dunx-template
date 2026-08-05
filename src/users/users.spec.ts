@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createTestServer, type TestServer } from '@dunx/testing';
-import { appModule } from '../app.module.js';
+import { AppModule } from '../app.module.js';
 import { validateConfig } from '../config/env.validation.js';
 import { httpOptions } from '../http.options.js';
 import { bearer, signIn, signUp } from '../test-support/session.js';
@@ -47,7 +47,7 @@ const create = (
 
 beforeAll(async () => {
   server = await createTestServer({
-    modules: [appModule({ source, logLevel: 'fatal' })],
+    modules: [AppModule.forRoot({ source, logLevel: 'fatal' })],
     prefix: 'api',
     // The harness inherits nothing from src/main.ts, so the production options
     // have to be handed over explicitly or the suite tests a server with no
@@ -410,23 +410,31 @@ describe('routing', () => {
   });
 
   /**
-   * Pins a consequence of installing a guard globally that is easy to be surprised
-   * by.
+   * This was a KNOWN GAP and is now closed by configuration, so the test is
+   * inverted rather than deleted.
    *
    * `Bun.serve({ routes })` answers a miss itself, so `listen()` installs one
    * `fetch` fallback that puts the global middleware in front of a 404 - which is
    * what gets an unmatched path logged and given a request id. The middleware
    * includes `SessionGuard`, and a path that matched no route carries no route
-   * metadata, so there is no `@Public()` for the guard to read: an anonymous
-   * request for a path that does not exist is answered 401 rather than 404.
+   * metadata, so there was no `@Public()` for the guard to read: an anonymous
+   * request for a path that did not exist was answered 401 rather than 404.
    *
-   * Harmless for a private API and arguably better, since it stops an anonymous
-   * caller probing which paths exist. It is still a difference from NestJS, where
-   * the router answers 404 before any guard runs, and there is no way to keep the
-   * logging without also authenticating the miss.
+   * The note used to say this was "arguably better, since it stops an anonymous
+   * caller probing which paths exist", and that there was "no way to keep the
+   * logging without also authenticating the miss". The second half was wrong -
+   * `HttpOptions.notFound: 'public'` reports the miss as `@Public()` and keeps the
+   * log line and the request id - and the first half does not hold for this app,
+   * whose route table is published at `/api/docs`. It also charged a better-auth
+   * session lookup to every unmatched request.
+   *
+   * See http.options.ts. A miss is a 404 here, as it is in NestJS.
    */
-  test('KNOWN GAP: an anonymous request for a missing path is a 401, not a 404', async () => {
-    const { status } = await server.json('api/nothing-here');
-    expect(status).toBe(401);
+  test('an anonymous request for a missing path is a 404', async () => {
+    const { status, body } = await server.json<{ error: string }>(
+      'api/nothing-here',
+    );
+    expect(status).toBe(404);
+    expect(body.error).toBe('NOT_FOUND');
   });
 });

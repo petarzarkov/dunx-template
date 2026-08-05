@@ -43,24 +43,26 @@ export class NotificationsModule {
       module: NotificationsModule,
       imports: [
         /**
-         * The outbound client `EmailService` posts through, registered under the
-         * name `email` rather than as the app's default `HttpService` - a named
-         * registration deliberately does not claim the unnamed token, so a second
-         * upstream added later coexists with this one instead of colliding.
+         * The outbound client `EmailService` posts through.
+         *
+         * Unnamed, so it binds `HttpService` itself and a service injects that class
+         * like any other dependency. `HttpModule` also supports naming a client -
+         * `forRootAsync(config, 'email')` binds `httpClient('email')`, a `Token`
+         * rather than a class, reached with `inject()` in a field initialiser because
+         * a token has no type name for `@dunx/transform` to record. That exists for
+         * an app calling several upstreams, and this app calls one. Using it here
+         * bought nothing and cost the plain constructor.
          *
          * `forRootAsync` because the timeout comes off validated config, which is the
          * one thing a zero-argument `forRoot` cannot read.
          */
-        HttpModule.forRootAsync(
-          {
-            useFactory: (config: AppConfigService) => ({
-              timeoutMs: config.get('email').timeoutMs,
-              headers: { 'content-type': 'application/json' },
-            }),
-            inject: [AppConfigService] as const,
-          },
-          'email',
-        ),
+        HttpModule.forRootAsync({
+          useFactory: (config: AppConfigService) => ({
+            timeoutMs: config.get('email').timeoutMs,
+            headers: { 'content-type': 'application/json' },
+          }),
+          inject: [AppConfigService] as const,
+        }),
       ],
       providers: [
         EmailService,

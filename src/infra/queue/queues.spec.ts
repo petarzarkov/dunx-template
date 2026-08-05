@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Subprocess } from 'bun';
 import { JobPublisher } from '@dunx/infra/queue';
 import { createTestServer, type TestServer } from '@dunx/testing';
-import { appModule } from '../../app.module.js';
+import { AppModule } from '../../app.module.js';
 import { validateConfig } from '../../config/env.validation.js';
 import { httpOptions } from '../../http.options.js';
 import { bearer, signIn } from '../../test-support/session.js';
@@ -17,11 +17,11 @@ import { JOBS, QUEUES } from '../../notifications/events/events.js';
  * `bun test` has to pass on a machine with nothing running - the degraded side of the
  * same contract is asserted in `src/infra/redis/redis.spec.ts`.
  *
- * **Jobs are published and read through `JobPublisher`, not over HTTP.** They used to
- * go through a `QueuesController` this app wrote because dunx had no dashboard, and
- * that controller is gone now that `@dunx/queue-dashboard` serves the real Bull
- * Board. Driving bullmq's own `Queue` is the better test anyway: it asserts the
- * queue, not an HTTP shape wrapped around it.
+ * **Jobs are published and read through `JobPublisher`, not over the routes.** The
+ * routes are asserted separately, above. Driving bullmq's own `Queue` for the
+ * round-trip is the better test: it asserts the queue rather than an HTTP shape
+ * wrapped around it, and it keeps the publish/consume test independent of whether
+ * this app happens to expose queue endpoints at all.
  */
 const APP_DIR = new URL('../../..', import.meta.url).pathname;
 const PREFIX = `test-${crypto.randomUUID()}`;
@@ -92,7 +92,7 @@ const settled = async (id: string): Promise<JobView> => {
 
 beforeAll(async () => {
   server = await createTestServer({
-    modules: [appModule({ source, logLevel: 'fatal' })],
+    modules: [AppModule.forRoot({ source, logLevel: 'fatal' })],
     prefix: 'api',
     // `QueueDashboardMiddleware` is in here, first in the chain - which is why the
     // authorization assertions below get the package's 404 and not the session
@@ -131,43 +131,60 @@ afterAll(async () => {
   await server.close();
 });
 
-describe('the queue dashboard', () => {
-  /**
-   * Not served without an admin session, and the status is the point: a dashboard
-   * that answered 403 would have confirmed to an anonymous caller that there is a
-   * dashboard at that path. `authorize` returns false and the package answers 404.
-   *
-   * Both of these hold with no Redis running, because `authorize` is checked before
-   * anything bull-board owns is loaded - which is also what keeps an app that mounts
-   * the board from connecting to a broker at boot.
-   */
-  test('is invisible to an anonymous caller', async () => {
-    const response = await server.request('queues');
-    expect(response.status).toBe(404);
+describe('the queue routes', () => {
+  test('are admin only', async () => {
+    const { status } = await server.json('api/queues');
+    expect(status).toBe(401);
   });
 
-  test('is invisible to a caller whose session does not resolve', async () => {
-    const response = await server.request('queues', {
-      headers: { authorization: 'Bearer not-a-real-session' },
-    });
-    expect(response.status).toBe(404);
-  });
-
-  test('serves the board to an admin', async () => {
+  test('report counts for every declared queue', async () => {
     if (!queueUp) return;
-    const response = await server.request('queues', { headers: bearer(token) });
-    expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toContain('text/html');
-    // bull-board's own entry template, rendered by the substitution renderer -
-    // which is why `ejs` is not a dependency here.
-    expect(await response.text()).toContain('id="root"');
+    const { status, body } = await server.json<{
+      broker: string;
+      queues: { name: string; counts: Record<string, number> }[];
+    }>('api/queues', { headers: bearer(token) });
+
+    expect(status).toBe(200);
+    expect(body.queues.map((q) => q.name).sort()).toEqual([
+      'media',
+      'notifications',
+    ]);
+    expect(body.queues[0]?.counts).toHaveProperty('waiting');
+    // The broker URL is redacted, so a password in it never reaches a response.
+    expect(body.broker).not.toContain('@');
   });
 
-  test('a path outside the board falls through to the app', async () => {
-    // The middleware is global, so this is the assertion that it does not swallow
-    // requests that are not its own.
-    const { status } = await server.json('api/service/up');
-    expect(status).toBe(200);
+  test('an unknown queue name is a 400 from the params schema', async () => {
+    if (!queueUp) return;
+    const { status } = await server.json('api/queues/nope/jobs/1', {
+      headers: bearer(token),
+    });
+    expect(status).toBe(400);
+  });
+
+  test('an unknown job id is a 404', async () => {
+    if (!queueUp) return;
+    const { status } = await server.json(
+      `api/queues/${QUEUES.NOTIFICATIONS}/jobs/999999`,
+      { headers: bearer(token) },
+    );
+    expect(status).toBe(404);
+  });
+
+  /**
+   * A miss is a **404**, not the session guard's 401.
+   *
+   * `@dunx/http` defaults to `notFound: 'guarded'`, which gives an unmatched path no
+   * route metadata so a global guard refuses it - and `SessionGuard` runs for misses
+   * too, since global middleware sits in front of the not-found fallback. That turned
+   * every typo into `401 UNAUTHENTICATED`, which says "log in" when the truth is "no
+   * such route". `notFound: 'public'` in http.options.ts is what makes this a 404, and
+   * this test is what stops that setting being dropped.
+   */
+  test('an unmatched path is a 404, not the guard\u2019s 401', async () => {
+    const { status, body } = await server.json<{ error: string }>('api/queue');
+    expect(status).toBe(404);
+    expect(body.error).toBe('NOT_FOUND');
   });
 });
 

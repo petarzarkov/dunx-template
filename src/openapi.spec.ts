@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { HttpFactory, type HttpApp } from '@dunx/http';
 import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
 import { testRoot } from '@dunx/testing';
-import { appModule } from './app.module.js';
+import { AppModule } from './app.module.js';
 import { authDocument } from './auth/auth.document.js';
 import { validateConfig } from './config/env.validation.js';
 import { httpOptions } from './http.options.js';
@@ -34,7 +34,7 @@ beforeAll(async () => {
     OpenApiModule.forRoot({
       title: 'dunx-template',
       version: '0.1.0',
-      root: testRoot([appModule({ source, logLevel: 'fatal' })]),
+      root: testRoot([AppModule.forRoot({ source, logLevel: 'fatal' })]),
       contribute: [authDocument(config)],
     }),
     { ...httpOptions(config), requestLogging: false },
