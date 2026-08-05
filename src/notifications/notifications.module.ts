@@ -2,6 +2,7 @@ import { provide, type DynamicModule } from '@dunx/core';
 import { RedisConnection } from '@dunx/infra/redis';
 import { PubSub } from '@dunx/http';
 import { HttpModule } from '@dunx/http/client';
+import { AccountsModule } from '../auth/auth.module.js';
 import { AppConfigService } from '../config/app.config.service.js';
 import {
   EventsPublisher,
@@ -42,6 +43,9 @@ export class NotificationsModule {
     return {
       module: NotificationsModule,
       imports: [
+        // Only where there is a gateway: `EventsGateway` authenticates the upgrade
+        // through `Auth`. The worker has neither, and must not build better-auth.
+        ...(options.publisher === 'socket' ? [AccountsModule] : []),
         /**
          * The outbound client `EmailService` posts through.
          *

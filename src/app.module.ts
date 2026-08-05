@@ -12,6 +12,7 @@ import { HealthModule } from './infra/health/health.module.js';
 import { ImagesConfigModule } from './infra/images/images.module.js';
 import { QueuesModule } from './infra/queue/queue.module.js';
 import { RedisCacheModule } from './infra/redis/redis.module.js';
+import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -34,8 +35,12 @@ export interface AppModuleOptions {
  * lazy, so an absent Redis or an unreachable bucket cannot stop the graph from
  * building - what degrades is the route that needs it.
  *
- * There is no `exports` list and no `@Global()`: the container is flat, so a
- * provider registered anywhere is visible everywhere.
+ * Every module in this list is **`global: true`**, and that is a decision rather
+ * than a shortcut. There is one database, one Redis client, one bucket, one image
+ * pipeline and one queue connection per process; `foundation()` builds each exactly
+ * once, and a feature module cannot construct its own without opening a second
+ * connection. What stays private is still private - each of them exports a named
+ * list, not its whole scope. Feature modules import each other normally.
  */
 const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
   AppConfigModule.forRoot(
@@ -75,13 +80,16 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
  * in dunx uses, `DbModule.forRoot()` and `QueueModule.forRootAsync()` included. It
  * must not *also* carry `@Module`: `resolveRef` in `@dunx/core` concatenates a
  * `DynamicModule`'s options with any decorator metadata on the class it names rather
- * than overriding them, so declaring both registers every import twice and boot dies
- * naming the same module on both sides of a duplicate binding:
+ * than overriding them, so declaring both registers every import twice and boot warns
+ * that one module is being seen from two places:
  *
- *   AppError: Duplicate binding for ConfigInput: bound by module "ConfigModule"
- *   and module "ConfigModule". The container is flat - one binding per token.
+ *   Module "AppModule" imports ConfigService from both "ConfigModule" and
+ *   "ConfigModule". The last import wins, so these are two separate instances.
  *
- * Decorate or configure, never both.
+ * Decorate or configure, never both. A module that takes **no** options should be
+ * decorated instead, as `AccountsModule` and `AuditModule` are: a class is one
+ * reference however many modules import it, and a factory returning a fresh object
+ * per call is a fresh scope per call.
  */
 export class AppModule {
   static forRoot(options: AppModuleOptions = {}): DynamicModule {
@@ -91,14 +99,34 @@ export class AppModule {
         ...foundation(options),
         QueuesModule.forRoot(),
         // After DatabaseModule, so better-auth reuses the connection it opened.
-        AccountsModule.forRoot(),
+        AccountsModule,
         NotificationsModule.forRoot({ publisher: 'socket' }),
         HealthModule,
         UsersModule,
         FilesFeatureModule.forRoot(),
         AuditModule,
       ],
-      providers: [AuditContextMiddleware],
+      /**
+       * The two **app-level** middlewares, declared by the module that lists them
+       * in `httpOptions.middleware`. Both inject across features - `CurrentUser`
+       * from `AccountsModule`, `DatabaseBootstrap` from `DatabaseModule` - and the
+       * root is the one scope that imports both.
+       *
+       * Neither moved into a feature module, and that is the honest answer rather
+       * than a missing step:
+       *
+       *  - `ThrottleGuard` limits every route, tuned per route by `@Throttle`
+       *    metadata. That is the global-guard-plus-metadata shape, and splitting it
+       *    per feature would mean a rate limiter each feature could forget.
+       *  - `AuditContextMiddleware` looked like the strongest candidate, since only
+       *    the `user` table is audited. But the writes to it include better-auth's
+       *    own sign-up route, which is a controller inside `@dunx/auth`'s
+       *    `AuthModule` rather than inside `AccountsModule`. Module middleware has
+       *    no ancestor layer, so scoping this would silently stop stamping the actor
+       *    there while the trigger still fired - with the *previous* request's id.
+       *    Global is correct, and the reason is worth keeping.
+       */
+      providers: [AuditContextMiddleware, ThrottleGuard],
     };
   }
 }

@@ -14,17 +14,19 @@ import { AppConfigService } from '../../config/app.config.service.js';
  */
 export class ImagesConfigModule {
   static forRoot(): DynamicModule {
+    const images = ImagesModule.forRootAsync({
+      useFactory: (config: AppConfigService) => {
+        const settings = config.get('images');
+        return { quality: settings.quality, maxWidth: settings.maxWidth };
+      },
+      inject: [AppConfigService] as const,
+    });
+
     return {
       module: ImagesConfigModule,
-      imports: [
-        ImagesModule.forRootAsync({
-          useFactory: (config: AppConfigService) => {
-            const images = config.get('images');
-            return { quality: images.quality, maxWidth: images.maxWidth };
-          },
-          inject: [AppConfigService] as const,
-        }),
-      ],
+      global: true,
+      imports: [images],
+      exports: [images],
     };
   }
 }

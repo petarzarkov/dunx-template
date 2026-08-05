@@ -60,7 +60,9 @@ export interface QueueSummary {
  *
  * Every route degrades: with no Redis these answer 503 in single-digit milliseconds
  * rather than hanging, which is what makes the whole app bootable with nothing
- * running.
+ * running. Nothing here does that translation - `QueueUnavailableMiddleware` is on
+ * this module's `middleware` list, so it wraps every route below and the handlers
+ * are left saying only what they do.
  */
 @ApiDoc({
   tags: ['queues'],
@@ -80,13 +82,11 @@ export class QueuesController {
     broker: string;
     queues: readonly QueueSummary[];
   }> {
-    const queues = await this.degrades(() =>
-      Promise.all(
-        Object.values(QUEUES).map(async (name) => ({
-          name,
-          counts: await this.publisher.queue(name).getJobCounts(),
-        })),
-      ),
+    const queues = await Promise.all(
+      Object.values(QUEUES).map(async (name) => ({
+        name,
+        counts: await this.publisher.queue(name).getJobCounts(),
+      })),
     );
     return { broker: this.options.redactedUrl, queues };
   }
@@ -102,13 +102,11 @@ export class QueuesController {
     const { queue } = input.params;
     const { name, data, delay } = input.body;
 
-    const job = await this.degrades(() =>
-      this.publisher.publish(
-        queue,
-        name,
-        data,
-        delay === undefined ? undefined : { delay },
-      ),
+    const job = await this.publisher.publish(
+      queue,
+      name,
+      data,
+      delay === undefined ? undefined : { delay },
     );
 
     return {
@@ -131,9 +129,7 @@ export class QueuesController {
     failedReason: string | null;
   }> {
     const { queue, jobId } = input.params;
-    const job = await this.degrades(() =>
-      this.publisher.queue(queue).getJob(jobId),
-    );
+    const job = await this.publisher.queue(queue).getJob(jobId);
     if (job === undefined) {
       throw new HttpError(
         HttpStatusCode.NOT_FOUND,
@@ -154,16 +150,14 @@ export class QueuesController {
   @Post('/:queue/jobs/:jobId/retry', oneJob)
   async retry(input: Input<typeof oneJob>): Promise<{ id: string }> {
     const { queue, jobId } = input.params;
-    await this.degrades(async () => {
-      const job = await this.publisher.queue(queue).getJob(jobId);
-      if (job === undefined) {
-        throw new HttpError(
-          HttpStatusCode.NOT_FOUND,
-          `No job ${jobId} on "${queue}"`,
-        );
-      }
-      await job.retry();
-    });
+    const job = await this.publisher.queue(queue).getJob(jobId);
+    if (job === undefined) {
+      throw new HttpError(
+        HttpStatusCode.NOT_FOUND,
+        `No job ${jobId} on "${queue}"`,
+      );
+    }
+    await job.retry();
     return { id: jobId };
   }
 
@@ -171,27 +165,7 @@ export class QueuesController {
   @Roles(UserRole.ADMIN)
   @Post('/:queue/drain', oneQueue)
   async drain(input: Input<typeof oneQueue>): Promise<{ queue: string }> {
-    await this.degrades(() => this.publisher.queue(input.params.queue).drain());
+    await this.publisher.queue(input.params.queue).drain();
     return { queue: input.params.queue };
-  }
-
-  /**
-   * No Redis is a degraded queue, not a broken app - the same contract the cache
-   * routes keep. bullmq surfaces some failures through its own client rather than
-   * Bun's, so the error shape is not guaranteed; anything unrecognised still
-   * becomes a 503 rather than a 500, because "the queue is not reachable" is the
-   * only thing it can mean here.
-   */
-  private async degrades<T>(run: () => Promise<T>): Promise<T> {
-    try {
-      return await run();
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      const reason = (error as Error).message;
-      throw new HttpError(
-        HttpStatusCode.SERVICE_UNAVAILABLE,
-        `Queue unavailable: ${reason}`,
-      );
-    }
   }
 }

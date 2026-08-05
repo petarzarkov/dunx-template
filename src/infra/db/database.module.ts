@@ -53,32 +53,49 @@ export class DatabaseBootstrap {
   }
 }
 
+/**
+ * **`global: true`**, like every module under `infra/`. There is exactly one
+ * database in this app, `foundation()` builds it once, and auth, users, audit and
+ * the health probe all read it - so making each of them import a reference they
+ * cannot construct for themselves would be ceremony with no boundary behind it.
+ * The private half is still private: `exports` lists the connection and the
+ * bootstrap, and nothing else here leaves the module.
+ *
+ * The alternative is worse than verbose, it is wrong: `DbModule.forRootAsync()`
+ * returns a new object per call, so a feature module calling it again would be a
+ * second scope with a second SQLite connection.
+ */
 export class DatabaseModule {
   static forRoot(): DynamicModule {
+    const db = DbModule.forRootAsync(SyncDatabase, {
+      useFactory: (config: AppConfigService) => {
+        const settings = config.get('db');
+        if (settings.type === DbType.POSTGRES) {
+          throw new TypeError(
+            'DB_TYPE=postgres is not supported by this SQLite-first template: the data layer is synchronous (bun:sqlite). Set DB_TYPE=sqlite.',
+          );
+        }
+        if (settings.sqlitePath !== ':memory:') {
+          mkdirSync(dirname(settings.sqlitePath), { recursive: true });
+        }
+        return new SyncSqliteOptions({
+          schema,
+          filename: settings.sqlitePath,
+          pragmas: ['journal_mode = WAL', 'foreign_keys = ON'],
+        });
+      },
+      inject: [AppConfigService] as const,
+    });
+
     return {
       module: DatabaseModule,
-      imports: [
-        DbModule.forRootAsync(SyncDatabase, {
-          useFactory: (config: AppConfigService) => {
-            const db = config.get('db');
-            if (db.type === DbType.POSTGRES) {
-              throw new TypeError(
-                'DB_TYPE=postgres is not supported by this SQLite-first template: the data layer is synchronous (bun:sqlite). Set DB_TYPE=sqlite.',
-              );
-            }
-            if (db.sqlitePath !== ':memory:') {
-              mkdirSync(dirname(db.sqlitePath), { recursive: true });
-            }
-            return new SyncSqliteOptions({
-              schema,
-              filename: db.sqlitePath,
-              pragmas: ['journal_mode = WAL', 'foreign_keys = ON'],
-            });
-          },
-          inject: [AppConfigService] as const,
-        }),
-      ],
+      global: true,
+      imports: [db],
       providers: [DatabaseBootstrap],
+      // The reference, not a token list: re-exporting the module hands on whatever
+      // `DbModule` exports - `DbConnection`, the drizzle handle - without this
+      // module having to restate a list that is not its own.
+      exports: [db, DatabaseBootstrap],
     };
   }
 }

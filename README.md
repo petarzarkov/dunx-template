@@ -126,11 +126,13 @@ src/
     decorators/              @Throttle, over @dunx/http's own metadata mechanism
     force-exit.ts            the shutdown watchdog, and why it exists
     middlewares/             the audit-actor stamp, read from AuthContext
+                             app-level, and app.module.ts says why it stayed there
   auth/                      Better Auth: options, module, schema, profile, admin seeder
   infra/
     db/                      schema, columns, migrations, triggers, seeds, DbModule wiring
     redis/                   RedisModule, the cache and the rate-limit guard
-    queue/                   QueueModule and the admin-only queue routes
+    queue/                   QueueModule, the admin-only queue routes, and the
+                             module-scoped filter that degrades them to 503
     files/                   StorageModule: local disk or S3, selected by config
     images/                  ImagesModule over Bun.Image
     health/                  liveness, readiness per area, build info
@@ -166,9 +168,32 @@ recorded as unresolved. The same goes for a `type X = ...` alias over the class.
 
 **Do not give a `@Module`-decorated class a static returning a `DynamicModule`
 that names itself.** The two option sets are unioned, not overridden, so every
-`forRoot()` in the decorator registers a second time and boot dies with
-`Duplicate binding ... bound by module "ConfigModule" and module "ConfigModule"`.
-`src/app.module.ts` is an undecorated class plus one `appModule()` factory.
+`forRoot()` in the decorator registers a second time and boot warns that one module
+is imported from two places. `src/app.module.ts` is an undecorated class plus one
+static factory.
+
+**A module that takes no options should be a decorated class, not a `forRoot()`.**
+A scope is keyed on the module _reference_, and `forRoot()` returns a fresh object
+per call - so `UsersModule` importing `AccountsModule.forRoot()` would build a
+second better-auth against a second session store. `AccountsModule` and
+`AuditModule` are decorated classes for exactly that reason; a class is one
+reference however many modules import it.
+
+**Infrastructure here is `global: true`, features are imported.** There is one
+database, one Redis client, one bucket, one image pipeline and one queue connection
+per process, and a feature module cannot construct its own without opening a second
+connection - so every module under `infra/` publishes a named `exports` list app-wide.
+Feature modules (`AccountsModule`, `AuditModule`) are imported normally, and export
+only what another feature legitimately calls: `CurrentUser` and `AuditService`, never
+a repository.
+
+**Module middleware covers the declaring module's controllers and nothing it
+imports.** `QueuesModule` lists `QueueUnavailableMiddleware`, which is what turns an
+unreachable broker into a 503 for the five queue routes - it replaced a private
+`degrades()` helper wrapped around every route body. The absent ancestor layer is why
+`AuditContextMiddleware` stays app-level: the writes it stamps include better-auth's
+own sign-up route, and that controller lives inside `@dunx/auth`'s `AuthModule`, not
+inside `AccountsModule`.
 
 **`@dunx/testing` inherits nothing from `src/main.ts`.** `createTestServer` takes
 `middleware` and `onError`, and a suite that omits them gets a server with no

@@ -12,8 +12,13 @@ export interface AppConfigModuleOptions {
 }
 
 /**
- * There is no `isGlobal` because dunx has no module encapsulation: every
- * provider is visible everywhere, so a config module is global by construction.
+ * There is no `isGlobal` to pass on: `ConfigModule.forRoot` is already
+ * `global: true` and exports `ConfigService` and `AppConfigService`, so every
+ * module reads config without importing anything. `ConfigInput` - the raw
+ * environment - stays private to it, which is the boundary that matters here.
+ *
+ * This wrapper therefore needs no `exports` of its own. It exists to keep
+ * `validateConfig` and `AppConfigService` paired in one place.
  */
 export class AppConfigModule {
   static forRoot(options: AppConfigModuleOptions = {}): DynamicModule {

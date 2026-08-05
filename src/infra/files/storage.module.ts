@@ -27,45 +27,47 @@ import { StorageDriver } from '../../config/dto/storage-vars.dto.js';
  */
 export class StorageModule {
   static forRoot(): DynamicModule {
+    const files = FilesModule.forRootAsync({
+      useFactory: async (config: AppConfigService): Promise<StorageOptions> => {
+        const storage = config.get('storage');
+
+        if (storage.driver === StorageDriver.S3) {
+          return new S3StorageOptions(
+            {
+              ...(storage.bucket === undefined
+                ? {}
+                : { bucket: storage.bucket }),
+              ...(storage.region === undefined
+                ? {}
+                : { region: storage.region }),
+              ...(storage.endpoint === undefined
+                ? {}
+                : { endpoint: storage.endpoint }),
+              ...(storage.accessKeyId === undefined
+                ? {}
+                : { accessKeyId: storage.accessKeyId }),
+              ...(storage.secretAccessKey === undefined
+                ? {}
+                : { secretAccessKey: storage.secretAccessKey }),
+            },
+            storage.prefix,
+          );
+        }
+
+        const root = resolve(storage.localRoot);
+        await mkdir(root, { recursive: true });
+        return new LocalStorageOptions(root);
+      },
+      inject: [AppConfigService] as const,
+    });
+
+    // `global: true` and a re-export, as every infra module here is: `Storage` is
+    // read by the files feature and by the health probe, and there is one of it.
     return {
       module: StorageModule,
-      imports: [
-        FilesModule.forRootAsync({
-          useFactory: async (
-            config: AppConfigService,
-          ): Promise<StorageOptions> => {
-            const storage = config.get('storage');
-
-            if (storage.driver === StorageDriver.S3) {
-              return new S3StorageOptions(
-                {
-                  ...(storage.bucket === undefined
-                    ? {}
-                    : { bucket: storage.bucket }),
-                  ...(storage.region === undefined
-                    ? {}
-                    : { region: storage.region }),
-                  ...(storage.endpoint === undefined
-                    ? {}
-                    : { endpoint: storage.endpoint }),
-                  ...(storage.accessKeyId === undefined
-                    ? {}
-                    : { accessKeyId: storage.accessKeyId }),
-                  ...(storage.secretAccessKey === undefined
-                    ? {}
-                    : { secretAccessKey: storage.secretAccessKey }),
-                },
-                storage.prefix,
-              );
-            }
-
-            const root = resolve(storage.localRoot);
-            await mkdir(root, { recursive: true });
-            return new LocalStorageOptions(root);
-          },
-          inject: [AppConfigService] as const,
-        }),
-      ],
+      global: true,
+      imports: [files],
+      exports: [files],
     };
   }
 }
