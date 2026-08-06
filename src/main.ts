@@ -86,7 +86,23 @@ logger.info(`${appConfig.name} listening`, {
   docs: `${url}${appConfig.prefix}/${boot.docs.path}`,
   openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
   health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
-  auth: `${url}${appConfig.prefix}${AUTH_MOUNT}`,
+  /**
+   * `/ok`, not the bare mount.
+   *
+   * better-auth serves every endpoint it and its plugins declare under one
+   * wildcard, which `@dunx/auth` mounts as `<basePath>/*` - and `Bun.serve`'s `/*`
+   * needs a segment after the slash, so **nothing is registered at the mount
+   * itself**. Printing it here advertised a URL that answered 404 to anyone who
+   * clicked it. `/ok` is better-auth's own liveness route, returns `{"ok":true}`,
+   * and is the one GET at this mount that a browser can usefully open.
+   *
+   * The sign-in and sign-up endpoints are POSTs, so they belong in the OpenAPI
+   * document rather than in a list of links - `authDocument()` contributes them.
+   */
+  auth: `${url}${appConfig.prefix}${AUTH_MOUNT}/ok`,
+  // Admin-only, so opening it in a browser with no session is a 401 by design -
+  // `SessionGuard` refusing is the template working, not a misconfiguration. The
+  // URL is here because it is where the queue data lives; get a token first.
   queues: `${url}${appConfig.prefix}/queues`,
   websocket: app.gatewayPaths.map(
     (path) => `${url.replace('http', 'ws').replace(/\/$/, '')}${path}`,
