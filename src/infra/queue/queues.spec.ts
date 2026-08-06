@@ -94,9 +94,9 @@ beforeAll(async () => {
   server = await createTestServer({
     modules: [AppModule.forRoot({ source, logLevel: 'fatal' })],
     prefix: 'api',
-    // `QueueDashboardMiddleware` is in here, first in the chain - which is why the
-    // authorization assertions below get the package's 404 and not the session
-    // guard's 401. See http.options.ts.
+    // The same options production passes, `SessionGuard` included - which is what
+    // makes the authorization assertions below meaningful. A suite that omitted
+    // them would get a server with no guards that still boots and still answers.
     ...httpOptions(validateConfig(source)),
     requestLogging: false,
   });

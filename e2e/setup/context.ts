@@ -127,8 +127,32 @@ const drain = (
   return () => chunks.join('').slice(-4000);
 };
 
+/**
+ * Refuses to run against a server this suite did not start.
+ *
+ * `waitForReady` polls an HTTP probe, so anything already listening on the port
+ * answers it - a `bun run dev` in another terminal, most likely. The suite then
+ * signed in against *that* server and opened the database file **it** was
+ * configured with, which surfaced as `SQLiteError: no such table: user` from a
+ * helper three files away. The port is the actual problem, so it says so.
+ */
+const assertPortFree = async (url: string): Promise<void> => {
+  const reachable = await fetch(`${url}/service/up`)
+    .then((response) => response.ok)
+    .catch(() => false);
+  if (!reachable) return;
+  throw new Error(
+    `${url} already answers, and this suite did not start it - a \`bun run dev\` ` +
+      'is the usual reason. The suite would sign in against that server and then ' +
+      'read a different database. Stop it, or point the suite elsewhere with ' +
+      'API_PORT and E2E_API_URL in e2e/.env.',
+  );
+};
+
 export const initializeTestContext = async (): Promise<TestContext> => {
   if (context !== undefined) return context;
+
+  await assertPortFree(API_URL);
 
   for (const suffix of ['', '-shm', '-wal']) {
     await rm(`${DB_PATH}${suffix}`, { force: true });
