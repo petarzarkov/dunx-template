@@ -8,6 +8,7 @@ import { AppConfigService } from './config/app.config.service.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { FilesFeatureModule } from './files/files.module.js';
+import { AppDashboardModule } from './infra/dashboard/dashboard.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
 import { HealthModule } from './infra/health/health.module.js';
@@ -100,6 +101,8 @@ export class AppModule {
       imports: [
         ...foundation(options),
         QueuesModule.forRoot(),
+        // After QueuesModule: the board reads the publisher's own queues.
+        AppDashboardModule.forRoot(),
         /**
          * `public/` - the chat client, which is the only way to see the gateway
          * without writing a websocket client by hand. Web process only: a worker

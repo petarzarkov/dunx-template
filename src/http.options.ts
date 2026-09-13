@@ -1,4 +1,5 @@
 import { SessionGuard } from '@dunx/auth';
+import { DashboardMiddleware } from '@dunx/dashboard';
 import { RedisRelay, type HttpOptions } from '@dunx/http';
 import { SERVICE_ROUTES } from './constants.js';
 import type { AppConfig } from './config/env.validation.js';
@@ -24,7 +25,18 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
      * audit stamp can name one. A guard is middleware that throws, so ordering is the
      * only thing that decides which runs first.
      */
-    middleware: [SessionGuard, ThrottleGuard, AuditContextMiddleware],
+    middleware: [
+      /**
+       * Ahead of `SessionGuard`, which is a requirement rather than a preference:
+       * the dashboard does its own `authorize` against better-auth, and behind the
+       * guard its polling would also be counted by `ThrottleGuard` against one
+       * key, since an unmatched path has no controller or handler to key on.
+       */
+      DashboardMiddleware,
+      SessionGuard,
+      ThrottleGuard,
+      AuditContextMiddleware,
+    ],
     onError: errorMapper,
     /**
      * A path that matched nothing answers **404**, not the session guard's 401.
