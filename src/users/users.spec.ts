@@ -42,7 +42,7 @@ const create = (
   server.json<SanitizedUser>('api/users', {
     method: 'POST',
     headers: asAdmin(),
-    json: { email, name, password: 'a-strong-password', ...extra },
+    json: { email, name, password: 'A-strong-password-1', ...extra },
   });
 
 beforeAll(async () => {
@@ -182,7 +182,7 @@ describe('users CRUD', () => {
     const token = await signIn(
       server,
       'grace@example.com',
-      'a-strong-password',
+      'A-strong-password-1',
     );
     expect(token.length).toBeGreaterThan(0);
 
@@ -205,11 +205,35 @@ describe('users CRUD', () => {
     });
     expect(status).toBe(400);
     expect(body.message).toBe('Invalid body');
-    expect(body.issues.map((i) => i.path).sort()).toEqual([
+    // Deduplicated: `short` trips four password rules at once, and this test is
+    // about which fields failed rather than how many ways each one did.
+    expect([...new Set(body.issues.map((i) => i.path))].sort()).toEqual([
       'email',
       'name',
       'password',
     ]);
+  });
+
+  /**
+   * better-auth's own sign-up enforces length and nothing else, so this rule is
+   * only true on the routes this app owns. Asserting it here is what stops the
+   * schema being swapped back for a bare `min(8)`.
+   */
+  test('a password with no digit or capital is refused', async () => {
+    const { status, body } = await server.json<{
+      issues: { path: string }[];
+    }>('api/users', {
+      method: 'POST',
+      headers: asAdmin(),
+      json: {
+        email: 'weak@example.com',
+        name: 'Weak Password',
+        password: 'password-only',
+      },
+    });
+    expect(status).toBe(400);
+    // Two issues, one field: no capital and no digit.
+    expect([...new Set(body.issues.map((i) => i.path))]).toEqual(['password']);
   });
 
   test('a duplicate email is a 409', async () => {

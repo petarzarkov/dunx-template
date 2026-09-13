@@ -1,6 +1,7 @@
 import type { RouteSchemas } from '@dunx/http';
 import { z } from 'zod';
 import { paginatedOf, pageOptionsSchema } from '../../core/pagination.dto.js';
+import { emailSchema, passwordSchema } from '../../core/zod/schemas.js';
 import { UserRole } from '../schema/user.schema.js';
 
 /**
@@ -36,11 +37,15 @@ export const ListUsersQuery = pageOptionsSchema.extend({
 
 export const CreateUser = z
   .object({
-    email: z.email(),
+    email: emailSchema,
     name: z.string().min(2).max(80),
-    // The route goes through better-auth's own sign-up, so a created user has a
-    // real credential and can sign in. The bounds are better-auth's own.
-    password: z.string().min(8).max(64),
+    /**
+     * The route goes through better-auth's own sign-up, so a created user has a
+     * real credential and can sign in. The length bounds match
+     * `auth.options.ts`; the complexity rules are this app's, because this route
+     * is this app's - better-auth's own sign-up enforces length only.
+     */
+    password: passwordSchema,
     role: z.enum([UserRole.ADMIN, UserRole.USER]).default(UserRole.USER),
   })
   .meta({ id: 'CreateUser', title: 'Create a user' });
