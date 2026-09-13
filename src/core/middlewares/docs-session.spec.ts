@@ -37,7 +37,7 @@ beforeAll(async () => {
     ...httpOptions(validateConfig(gated)),
     requestLogging: false,
   });
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();

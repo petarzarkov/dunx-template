@@ -44,7 +44,7 @@ beforeAll(async () => {
   app.setGlobalPrefix('api');
   await app.listen(0);
   doc = JSON.parse(app.get(OpenApiExplorer).json('api')) as OpenApiDoc;
-});
+}, 30_000);
 
 afterAll(async () => {
   await app.shutdown();

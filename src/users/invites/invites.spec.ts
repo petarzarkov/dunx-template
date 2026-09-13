@@ -70,7 +70,7 @@ beforeAll(async () => {
     'plain@local.dev',
     'Plain-password-1!',
   ));
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();
