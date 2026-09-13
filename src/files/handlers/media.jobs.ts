@@ -35,7 +35,23 @@ export class MediaJobs {
     private readonly logger: Logger,
   ) {}
 
-  @JobHandler({ queue: QUEUES.MEDIA, name: JOBS.FILE_THUMBNAIL })
+  /**
+   * **`background: true`**, which is the one job here that earns it.
+   *
+   * Decoding an image, resizing it and re-encoding it as WebP is CPU work on a
+   * single-threaded runtime: done in the worker's own process it blocks the
+   * event loop, and every other job on every other queue waits behind it.
+   * bullmq runs this in a forked child instead, and `media.processor.ts` is the
+   * file it forks into.
+   *
+   * The other handlers stay in-process, because a `fetch` and two Redis writes
+   * are not worth a fork.
+   */
+  @JobHandler({
+    queue: QUEUES.MEDIA,
+    name: JOBS.FILE_THUMBNAIL,
+    background: true,
+  })
   async thumbnail(job: Job<FileThumbnailJob>): Promise<ThumbnailResult> {
     const { fileId, key, width } = job.data;
 

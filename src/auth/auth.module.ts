@@ -1,6 +1,6 @@
 import { AuthModule, redisStorage } from '@dunx/auth';
 import { drizzleDatabase } from '@dunx/auth/drizzle';
-import { Logger, Module } from '@dunx/core';
+import { EventBus, Logger, Module } from '@dunx/core';
 import { DbConnection } from '@dunx/infra/db';
 import { JobPublisher } from '@dunx/infra/queue';
 import { RedisConnection } from '@dunx/infra/redis';
@@ -39,6 +39,7 @@ const auth = AuthModule.forRootAsync(
       config: AppConfigService,
       connection: DbConnection,
       redis: RedisConnection,
+      bus: EventBus,
       publisher: JobPublisher,
       logger: Logger,
     ) => {
@@ -68,7 +69,7 @@ const auth = AuthModule.forRootAsync(
         }),
         // Every path into the user table, not just the ones this app
         // calls - which is why this is a hook and not a call site.
-        databaseHooks: registrationHooks(publisher, logger),
+        databaseHooks: registrationHooks(bus, logger),
         /**
          * Merged into the options `authOptions` built from config, because the
          * sender needs `JobPublisher` and that only exists in the container.
@@ -93,6 +94,7 @@ const auth = AuthModule.forRootAsync(
       AppConfigService,
       DbConnection,
       RedisConnection,
+      EventBus,
       JobPublisher,
       Logger,
     ] as const,

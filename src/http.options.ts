@@ -66,6 +66,12 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
      * The miss is still logged and still gets a request id: the fallback runs the
      * global middleware either way, which is the whole reason it exists.
      */
+    /**
+     * Per-route request counts and timings, folded into the entry the request
+     * logger already builds - about 35 ns. `@dunx/dashboard` renders them, and
+     * without this its stats panel has nothing in it.
+     */
+    metrics: true,
     notFound: 'public',
     requestLogging: {
       requestBody: config.log.requestBody,

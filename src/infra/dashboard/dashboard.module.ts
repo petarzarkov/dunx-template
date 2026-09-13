@@ -1,6 +1,7 @@
 import { Auth, rolesOf } from '@dunx/auth';
 import { DashboardModule } from '@dunx/dashboard';
 import type { DynamicModule } from '@dunx/core';
+import { RequestMetrics } from '@dunx/http';
 import { CacheMetrics } from '@dunx/infra/cache';
 import { JobPublisher } from '@dunx/infra/queue';
 import { RedisConnection } from '@dunx/infra/redis';
@@ -49,6 +50,7 @@ export class AppDashboardModule {
         redis: RedisConnection,
         config: AppConfigService,
         cacheStats: CacheMetrics,
+        stats: RequestMetrics,
       ) => ({
         path: DASHBOARD_PATH,
         title: `${config.get('app').name} ops`,
@@ -61,6 +63,8 @@ export class AppDashboardModule {
         redis,
         // `CacheModule.forRoot(..., { metrics: true })` is what fills this.
         cacheStats,
+        // Needs `metrics: true` on HttpFactory.create to have anything in it.
+        stats,
         config: config,
         openApiPath: `/${config.get('app').prefix}/${config.get('docs').path}`,
         // The app's own front page, so bull-board's header is not a dead end.
@@ -84,6 +88,7 @@ export class AppDashboardModule {
         RedisConnection,
         AppConfigService,
         CacheMetrics,
+        RequestMetrics,
       ] as const,
     });
   }

@@ -14,7 +14,12 @@ import {
   WorkerPublisher,
 } from './events/events.publisher.js';
 import { AppEmailModule } from './email/email.module.js';
+import {
+  AnnounceRegistration,
+  QueueWelcomeEmail,
+} from './events/registration.subscribers.js';
 import { EventsGateway } from './events/events.gateway.js';
+import { FeedController } from './events/feed.controller.js';
 import { NotificationJobs } from './handlers/notification.jobs.js';
 
 export interface NotificationsModuleOptions {
@@ -104,8 +109,24 @@ export class NotificationsModule {
          */
         AppEmailModule.forRoot(),
       ],
+      // The SSE feed is a route, so only where there is a server to serve it.
+      ...(options.publisher === 'socket'
+        ? { controllers: [FeedController] }
+        : {}),
       providers: [
         NotificationJobs,
+        /**
+         * The two reactions to `UserRegistered`. They are listed here rather
+         * than registered anywhere: `EventRegistry` walks the prototypes of the
+         * classes the modules already declare, so `providers` is the whole of
+         * it - the same marker-plus-scan `@JobHandler` and the routes use.
+         *
+         * In both processes: the web one publishes the event from better-auth's
+         * hook, and the worker is where a handler would run if it ever emitted
+         * one of its own.
+         */
+        QueueWelcomeEmail,
+        AnnounceRegistration,
         publisher,
         // The gateway only exists where there is a server to upgrade on.
         ...(options.publisher === 'socket' ? [EventsGateway] : []),

@@ -1,5 +1,6 @@
 import type { ConfigSource, DynamicModule, ModuleRef } from '@dunx/core';
 import { StaticModule } from '@dunx/http';
+import { EventBusModule } from '@dunx/core';
 import { LoggerModule } from '@dunx/infra/logger';
 import { ScheduleModule } from '@dunx/infra/schedule';
 import { AccountsModule } from './auth/auth.module.js';
@@ -74,6 +75,15 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
         { captureGlobalErrors: true },
       )
     : LoggerModule.forRoot({ level: options.logLevel }),
+  /**
+   * In-process fan-out, bound globally so a subscriber's module does not have to
+   * import the publisher's - which is the whole point of using it.
+   *
+   * A decorated class, not a `forRoot()`: a scope is keyed on the module
+   * reference, so two importers calling a zero-argument factory would build two
+   * buses and a publisher would reach half its subscribers.
+   */
+  EventBusModule,
   DatabaseModule.forRoot(),
   RedisCacheModule.forRoot(),
   // After Redis: the L2 store is built over that connection.
