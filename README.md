@@ -1,272 +1,304 @@
-# NestJS Template
+# dunx-template
 
-A production-ready NestJS modular monolith template running on **Bun** — **SQLite-first** persistence (Drizzle ORM), **BullMQ + Redis** for the job queue (with a Bull Board dashboard and sandboxed child-process workers), Zod validation, and modern tooling.
+A production-shaped starter for [dunx](https://petarzarkov.github.io/dunx/),
+ported feature for feature from
+[`nestjs-template`](https://github.com/petarzarkov/nestjs-template).
 
-## Tech Stack
+Validated configuration, structured logging with request context, one log entry
+per request, health endpoints, prefixed REST controllers with zod validation and
+keyset pagination, SQLite through drizzle with migrations, seeds and audit
+triggers, a single error mapper, an OpenAPI document and explorer served at
+runtime, unit / integration / e2e suites, Docker and CI.
 
-| Layer                | Technology                                                                                                                                                                                    |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime              | [Bun](https://bun.sh)                                                                                                                                                                         |
-| Framework            | [NestJS 11](https://nestjs.com)                                                                                                                                                               |
-| Language             | TypeScript 7 (strict, ESNext) — the [native (Go) compiler](https://github.com/microsoft/typescript-go); `tsc --noEmit` for typechecking                                                       |
-| Database             | SQLite via [`bun:sqlite`](https://bun.sh/docs/api/sqlite) + [Drizzle ORM](https://orm.drizzle.team) (synchronous)                                                                             |
-| Job Queue            | [BullMQ](https://bullmq.io) + Redis ([Bull Board](https://github.com/felixmosh/bull-board) dashboard, sandboxed workers)                                                                      |
-| Cache & Rate Limit   | Redis (`@nestjs/cache-manager` + `@nestjs/throttler` with Redis storage)                                                                                                                      |
-| Validation           | [Zod](https://zod.dev) + [nestjs-zod](https://github.com/BenLorantfy/nestjs-zod)                                                                                                              |
-| Auth                 | [Better Auth](https://www.better-auth.com) (stateful sessions, email/password, Google, GitHub, LinkedIn) via [`@thallesp/nestjs-better-auth`](https://github.com/ThallesP/nestjs-better-auth) |
-| WebSockets           | Socket.io with Redis adapter (multi-node)                                                                                                                                                     |
-| Email                | [Resend](https://resend.com) + [React Email](https://react.email)                                                                                                                             |
-| AI                   | Google Gemini, Groq, OpenRouter — **SDK-free**, via OpenAI-compatible REST/SSE through `FetchService`                                                                                         |
-| File Storage         | AWS S3                                                                                                                                                                                        |
-| API Docs             | Swagger + [Scalar](https://scalar.com)                                                                                                                                                        |
-| Logging              | [@arkv/nestjs-context-logger](https://www.npmjs.com/package/@arkv/nestjs-context-logger) (structured, async-context)                                                                          |
-| Admin CMS            | [@arkv/nestjs-cms](https://www.npmjs.com/package/@arkv/nestjs-cms) (OpenAPI-driven admin UI)                                                                                                  |
-| Build                | Bun-native transpile (`scripts/build.ts`)                                                                                                                                                     |
-| Linting & Formatting | [Oxlint](https://oxc.rs) (type-aware) + [oxfmt](https://oxc.rs)                                                                                                                               |
-| Testing              | Bun test runner                                                                                                                                                                               |
+Plus every area that needs something running: **Better Auth** sessions with a
+global guard and roles, **BullMQ** queues with a separate worker process,
+**object storage** on local disk or S3, **image** processing on `Bun.Image`,
+**websocket** gateways with multi-node fan-out, admin-only **queue routes**, an
+outbound HTTP client with retries, and **Redis** caching and rate limiting.
 
-## Prerequisites
+**None of it is required to be running.** An area whose service is absent reports
+that it is skipping and the app boots anyway: `bun run start`, `bun test` and
+`bun run test:e2e` all pass with nothing installed, and exercise the real thing
+when it is up. `/api/service/health` says which is which.
 
-- [Bun](https://bun.sh) >= 1.0.0
-- **Redis** (for the BullMQ queue, Socket.io adapter, throttler, and cache). The DB itself is a local SQLite file — no Postgres needed.
+`MAPPING.md` is the NestJS-to-dunx concept table, including the one thing it listed as
+unportable that turned out not to be, and the one that came back and left again.
+`docs/env-vars.md` is every environment variable, generated from the schemas that
+validate them.
 
-## Quick Start
+## Quick start
 
 ```bash
-# Install dependencies
 bun install
-
-# Start Redis (dev infra)
-docker compose up -d          # starts a local redis on :6379
-
-# Configure environment
 cp .env.example .env
-# Edit .env as needed (see env-vars.md). Defaults (localhost:6379) work out of the box.
-
-# Start development server (SQLite migrations auto-apply on boot)
-bun dev
+bun run start
 ```
 
-Optionally seed an admin user:
+```
+http://localhost:3001/api/service/health
+http://localhost:3001/api/docs          the API explorer, served at runtime
+http://localhost:3001/api/openapi.json  the document, served at runtime
+http://localhost:3001/api/queues        queue depth and job inspection, admin only
+ws://localhost:3001/ws
+```
+
+Nothing else is needed: the migrations, the audit triggers and the first
+administrator are all applied at boot. Every route but the health probes and
+Better Auth's own endpoints needs a session, and the bearer token from a sign-in
+is what carries it:
 
 ```bash
-bun run seed            # runs migration-style seeders (default admin)
-# or interactively:
-bun run create:admin
+TOKEN=$(curl -sD - -o /dev/null -X POST http://localhost:3001/api/auth/sign-in/email \
+  -H 'content-type: application/json' \
+  -d '{"email":"admin@local.dev","password":"admin-password"}' \
+  | awk -F': ' '/^set-auth-token/ {print $2}' | tr -d '\r')
+
+curl -H "authorization: Bearer $TOKEN" http://localhost:3001/api/users
+curl -H "authorization: Bearer $TOKEN" -F file=@some.png http://localhost:3001/api/files
+curl -H "authorization: Bearer $TOKEN" http://localhost:3001/api/queues
 ```
 
-## Features
+### With the services up
 
-### Authentication & Authorization
+```bash
+docker compose up -d          # valkey, and only valkey
+bun run dev                   # nothing to configure
+bun run worker                # the consumer, in a second terminal
+```
 
-- **Better Auth** (`@thallesp/nestjs-better-auth`) with **stateful sessions stored in Redis** (signed cookie, or `Authorization: Bearer <sessionToken>` via the `bearer` plugin)
-- Email/password auth with native Bun bcrypt hashing (`Bun.password`, via Better Auth)
-- OAuth2 providers: Google, GitHub, LinkedIn (accounts stored per user in the `account` table)
-- Role-based access control (RBAC) with `admin` and `user` roles, plus user ban/unban (`admin` plugin)
-- Password reset flow with email tokens
-- Invite-based registration (public `POST /api/invites/accept`)
+**`REDIS_URL` is not needed for a local broker.** `Bun.RedisClient` resolves
+`$VALKEY_URL`, then `$REDIS_URL`, then `valkey://localhost:6379` on its own, so a
+container published on the default port is found with the variable left commented out
+in `.env` - which is why `/api/service/health` moves every area to `up` without it.
+Set it when the broker is somewhere else:
 
-### Database & ORM
+```bash
+REDIS_URL=redis://user:pass@broker.internal:6379 bun run start
+```
 
-- **Drizzle ORM over `bun:sqlite`** — fully **synchronous** data access (no `await` on queries)
-- Automatic `casing: 'snake_case'` mapping (camelCase properties → snake_case columns)
-- **Boot-time migrator** — migrations auto-apply on startup, so a fresh SQLite file is always schema-current
-- Timestamps as integer epoch-ms, JSON columns via `text({ mode: 'json' })`, `$inferSelect`/`$inferInsert` row types
-- Explicit, readable index/constraint names in the schema files
-- Automatic **audit logging via SQLite triggers** (not application code) — old/new JSON snapshots written to `audit_log`
-- `postgres` reserved as a future async data layer (config surface present; the module throws if selected)
+The compose file starts **backing services only**. The app and the worker are not
+services in it: `bun --watch src/main.ts` is a better development loop than a
+container, and the `Dockerfile` is for deploying, which is a different job. MinIO is
+behind a profile, so a plain `up` is Redis on its own:
 
-### Job Queue System
+```bash
+docker compose --profile s3 up -d                     # valkey, minio, and a bucket
+```
 
-- **BullMQ queues over Redis**, registered via `@nestjs/bullmq`
-- Declarative `@JobHandler()` decorator for job routing; auto-discovery via NestJS `DiscoveryService`
-- **Sandboxed workers**: the `background-jobs-queue` runs in a **separate child process** per worker (BullMQ sandboxed processor bootstrapping a trimmed Nest context), isolating heavy work from the HTTP process; the `notifications-events-queue` runs in-process
-- **Bull Board** dashboard at `/api/queues`
-- Configurable concurrency, retries with exponential backoff, per-job timeout, and rate limiting
-
-### Real-time Communication
-
-- Socket.io WebSocket gateway authenticated via Better Auth sessions (bearer session token)
-- **Redis adapter** for cross-process / multi-node broadcast (sandboxed workers emit via a Redis emitter)
-- Room-based messaging: chat (all users), private (per user), admin-only
-- AI response streaming over WebSocket
-
-### Email Notifications
-
-- Resend API integration
-- React Email templates with a **Bun-native** preview + export server (`scripts/email.ts`) — no `react-email` CLI / `@react-email/ui` / Next.js
-- Event-driven: welcome, invite, and password reset emails
-
-### AI Integration
-
-- **No AI SDK** — providers talk plain OpenAI-compatible REST/SSE through the shared `FetchService` (Gemini via its `/v1beta/openai` endpoint); one `BaseProviderAiService` contract, uniform dispatch
-- Providers: Google Gemini, Groq, OpenRouter
-- Text, Zod-validated structured output, and streaming (REST + WebSocket)
-- Dynamic model discovery from provider APIs with static fallbacks
-
-### File Management
-
-- AWS S3 upload, download, delete with presigned URLs
-- File metadata persistence (name, size, MIME type, image dimensions)
-- Validation: size limits (1KB–10MB), name length, file count
-
-### Admin CMS
-
-- OpenAPI-driven admin UI (`@arkv/nestjs-cms`) served at `/cms` — CRUD resources are generated from the Swagger document
-- Schema endpoint at `/cms/schema`; logs in against this API via the documented `/api/auth/sign-in/email` endpoint
-- Zero hand-written admin pages: document an endpoint and it shows up
-
-### Observability
-
-- Structured JSON logging with `AsyncLocalStorage`-based context (`@arkv/nestjs-context-logger`)
-- `warn`/`error`/`fatal` go to stderr; everything else to stdout
-- Request ID propagation (`X-Request-Id` header)
-- Sensitive field masking in logs (password, jwt, token, secret, key, phone)
-- Health check endpoints (DB, memory)
-- HTTP request/response logging with timing
-
-### Validation & Error Handling
-
-- **Zod** schemas via `createZodDto` (nestjs-zod), enforced by a global `ZodValidationPipe`
-- `GenericExceptionFilter` for consistent error responses
-- `DbExceptionFilter` maps `bun:sqlite` constraint errors (unique → 409, FK/not-null → 400)
-
-### Cursor-based Pagination
-
-- Keyset (cursor) pagination on all list endpoints — no offset/page numbers
-- Opaque Base64url-encoded cursors for stable, index-friendly paging
-- Bidirectional navigation (`forward` / `backward`)
-- `take+1` sentinel strategy (no COUNT queries)
-- Automatic sort key detection (`updatedAt` → `createdAt` → `id`)
-- Exact integer-millisecond timestamp comparison (no `date_trunc` needed)
-
-### Rate Limiting & Cache
-
-- `@nestjs/throttler` with **Redis** storage (`@nest-lab/throttler-storage-redis`)
-- Three-tier throttling: short (10/1s), medium (50/10s), long (300/60s) — skipped for authenticated users
-- Environment-aware `@EnvThrottle()` decorator (Redis sliding window)
-- Redis-backed REST cache (`@nestjs/cache-manager`) with an opt-in `HttpCacheInterceptor` + `@NoCache()`
-
-### Developer Experience
-
-- Type-aware Oxlint for linting and oxfmt for formatting
-- TypeScript 7 (`typescript@7`, the native Go compiler — `tsc --noEmit`) for fast typechecking
-- Husky + lint-staged for pre-commit hooks (run the same `lint`/`format` scripts)
-- Swagger + Scalar API documentation with optional basic auth
-- `bun dev` with hot reload via `bun --watch`
-
-### Integrations
-
-- **Slack**: Bot notifications with rich message formatting
-- **AWS S3**: File storage with presigned URL support
+The cache, the rate limiter, the queue and websocket fan-out across nodes all go
+live, and `/api/service/health` moves those areas from `degraded` to `up`. Set
+`STORAGE_DRIVER=s3` with the five `S3_*` variables to put uploads in MinIO
+instead of on disk - the backend is one `StorageOptions` subclass and no code
+changes.
 
 ## Scripts
 
-```bash
-# Development
-bun dev                                   # Dev server with hot reload
-bun run build                             # Build for production (Bun transpile)
-bun start                                 # Start production build
+| Script                 | What it does                                                                                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun run dev`          | `bun --watch src/main.ts`                                                                                                                                                     |
+| `bun run start`        | `bun src/main.ts`, the shape the Dockerfile uses                                                                                                                              |
+| `bun run worker`       | `bun src/worker.ts`, the queue consumer. A second process                                                                                                                     |
+| `bun run build`        | `Bun.build` with `depsPlugin` into `dist/`; `start:dist` runs it                                                                                                              |
+| `bun run typecheck`    | `tsc --noEmit`                                                                                                                                                                |
+| `bun run lint`         | oxlint, fixing in place. `lint:check` does not fix                                                                                                                            |
+| `bun run format`       | oxfmt. `format:check` does not write                                                                                                                                          |
+| `bun test`             | unit (`*.test.ts`) and integration (`*.spec.ts`) under `src/`                                                                                                                 |
+| `bun run test:e2e`     | spawns a real server and drives it over HTTP                                                                                                                                  |
+| `bun run mig:gen`      | `drizzle-kit generate`                                                                                                                                                        |
+| `bun run mig:run`      | applies migrations without booting the app                                                                                                                                    |
+| `bun run seed`         | migrate, apply triggers, then `runSeeds`                                                                                                                                      |
+| `bun run db:drop`      | deletes the SQLite file and its WAL sidecars                                                                                                                                  |
+| `bun run gen:openapi`  | exports `openapi.json` with no container and no server. The app serves the document itself at `/api/openapi.json`; this is for committing the contract and for client codegen |
+| `bun run gen:env:docs` | regenerates `docs/env-vars.md` from the zod env schemas                                                                                                                       |
 
-# Testing — unit (*.test.ts) + integration (*.spec.ts, in-memory SQLite) live in src/
-bun run test                              # Run unit + integration (bun test)
-bun run test:unit                         # Unit only (*.test.ts)
-bun run test:int                          # Integration only (*.spec.ts)
-bun test --watch                          # Watch mode (unit)
-bun run test:cov                          # Coverage (unit + integration)
-bun run test:e2e                          # Run E2E tests (*.e2e.ts, live server + throwaway SQLite DB)
-bun run test:e2e:single ./e2e/path.e2e.ts # Run single E2E test
-
-# Database
-bun run mig:gen                           # Generate a Drizzle migration from schema changes
-bun run mig:run                           # Apply pending migrations
-bun run db:push                           # Push schema straight to the DB (dev only)
-bun run db:studio                         # Open Drizzle Studio
-bun run seed                              # Run migration-style seeders
-
-# Code Quality
-bun run lint                              # Type-aware lint + fix with Oxlint
-bun run format                            # Format with oxfmt
-bun run typecheck                         # Typecheck with tsc (TypeScript 7 native)
-
-# Utilities
-bun run create:admin                      # Create admin user interactively
-bun run email                             # Email template preview (port 3035)
-bun run email:export                      # Export email templates as HTML
-bun run gen:env:docs                      # Generate env vars documentation
-```
-
-## Project Structure
+## Layout
 
 ```
 src/
-├── main.ts               # Application bootstrap
-├── app.module.ts          # Root module
-├── constants.ts           # Global constants
-├── config/                # Type-safe environment configuration (Zod)
-├── core/                  # Shared utilities (decorators, filters, interceptors, pagination, zod)
-├── infra/                 # Infrastructure (db, redis, queue, health)
-├── auth/                  # Better Auth config (sessions, OAuth) + session/account/verification schema
-├── users/                 # User management + invites submodule
-├── audit/                 # Automatic change logging via SQLite triggers
-├── file/                  # File upload + S3 storage
-├── notifications/         # Email, WebSocket, Slack, queue handlers
-└── ai/                    # Multi-provider AI integration
-
-e2e/                       # End-to-end tests (throwaway SQLite DB)
-public/                    # Static files (demo chat UI - testing only)
-scripts/                   # CLI utilities (build, seed, admin creation, env docs)
+  main.ts                    bootstrap: create, configure, listen
+  worker.ts                  the queue consumer, a container with no server
+  http.options.ts            the HttpOptions, shared with the test suites
+  app.module.ts              both graphs: AppModule.forRoot() and WorkerModule.forRoot()
+  constants.ts               route segments and the websocket path
+  config/                    zod env schemas, validateConfig, AppConfigService
+  core/
+    errors/error-mapper.ts   the one ErrorMapper: HttpError, ValidationError, SQLiteError
+    decorators/              @Throttle, over @dunx/http's own metadata mechanism
+    force-exit.ts            the shutdown watchdog, and why it exists
+    middlewares/             the audit-actor stamp, read from AuthContext
+                             app-level, and app.module.ts says why it stayed there
+  auth/                      Better Auth: options, module, schema, profile, admin seeder
+  infra/
+    db/                      schema, columns, migrations, triggers, seeds, DbModule wiring
+    redis/                   RedisModule, the cache and the rate-limit guard
+    queue/                   QueueModule, the admin-only queue routes, and the
+                             module-scoped filter that degrades them to 503
+    files/                   StorageModule: local disk or S3, selected by config
+    images/                  ImagesModule over Bun.Image
+    health/                  liveness, readiness per area, build info
+  users/                     controller, service, repository, schema, DTOs
+  files/                     upload, download, presign, thumbnails, the media job
+  notifications/             the websocket gateway, the events publisher, job handlers
+  audit/                     read side of the trigger-written audit_log
+  test-support/              sign-in helpers shared by the integration suites
+e2e/                         suites against a spawned server
+scripts/                     build, migrate, seed, db-drop, gen-openapi
 ```
 
-Each domain module keeps its Drizzle table in a `schema/` folder; the `entity/` folder derives the Swagger response DTO from that table (`drizzle-zod` `createSelectSchema` + `createZodDto`) as a single source of truth. Repositories extend a generic `BaseRepository` for standard CRUD + cursor pagination.
+## Things that will bite you
 
-## API Endpoints
+Collected while writing this. Each one has a comment at the site and, where it
+matters, a test that pins the behaviour.
 
-| Route                                                   | Description                                |
-| ------------------------------------------------------- | ------------------------------------------ |
-| `POST /api/auth/sign-in/email`                          | Email/password login (→ `{ token, user }`) |
-| `POST /api/auth/sign-up/email`                          | Register with email + password             |
-| `POST /api/auth/forget-password`                        | Request password reset                     |
-| `POST /api/auth/reset-password`                         | Reset password                             |
-| `GET /api/auth/sign-in/social/{google,github,linkedin}` | OAuth login                                |
-| `GET /api/users`                                        | List users (cursor paginated)              |
-| `GET /api/invites`                                      | Manage invites                             |
-| `POST /api/invites/accept`                              | Accept an invite (public)                  |
-| `POST /api/ai/query`                                    | AI query                                   |
-| `GET /api/ai/models`                                    | List AI models                             |
-| `POST /api/files`                                       | Upload file                                |
-| `GET /api/files`                                        | List files (cursor paginated)              |
-| `GET /api/audit`                                        | Query audit logs (cursor paginated)        |
-| `GET /api/service/health`                               | Health check (DB, memory)                  |
-| `GET /api/service/up`                                   | Uptime check                               |
-| `GET /api/service/config`                               | Service configuration                      |
-| `GET /api/queues`                                       | Bull Board queue dashboard                 |
-| `GET /cms`                                              | Admin CMS UI (OpenAPI-driven)              |
+**The `bunfig.toml` preload is load-bearing.** Without
+`preload = ["@dunx/transform/preload"]` no constructor parameter types are
+recorded and boot fails. It has to be in the Docker image, and it must also be
+under a separate `[test]` table or `bun test` boots nothing.
 
-## Documentation
+**A constructor parameter's type must be a value import.**
 
-- **API Docs**: Swagger UI at `/api/docs` + Scalar at `/api/public` (when running)
-- **Admin CMS**: OpenAPI-driven admin UI at `/cms`
-- **Environment Variables**: See [env-vars.md](./env-vars.md) for the full configuration reference
-
-## Docker
-
-- **Dev** — `docker compose up -d` starts a local Redis (the app runs on the host via `bun dev`; the DB is a local SQLite file). Postgres is available but opt-in: `docker compose --profile postgres up -d`.
-- **Full stack** — the app + Redis together:
-
-```bash
-cp .env.example .env.full                 # Setup env
-docker compose -f docker-compose.full.yml --env-file .env.full up -d    # Start (app + redis)
-docker compose -f docker-compose.full.yml --env-file .env.full down     # Stop
+```ts
+import type { SyncDatabase } from '@dunx/infra/db'; // boot error
+import { SyncDatabase } from '@dunx/infra/db'; // works
 ```
 
-The SQLite database persists in the `app-data` volume (`/app/data`) and Redis data in `redis-data`. To rebuild the backend:
+Type-only imports are erased before the transform sees them, so the parameter is
+recorded as unresolved. The same goes for a `type X = ...` alias over the class.
+`verbatimModuleSyntax` and most editors will push you toward the broken form.
 
-```bash
-docker compose -f docker-compose.full.yml --env-file .env.full build --no-cache app-backend-full
-docker compose -f docker-compose.full.yml --env-file .env.full up -d app-backend-full
-```
+**Do not give a `@Module`-decorated class a static returning a `DynamicModule`
+that names itself.** The two option sets are unioned, not overridden, so every
+`forRoot()` in the decorator registers a second time and boot warns that one module
+is imported from two places. `src/app.module.ts` is an undecorated class plus one
+static factory.
 
-## License
+**A module that takes no options should be a decorated class, not a `forRoot()`.**
+A scope is keyed on the module _reference_, and `forRoot()` returns a fresh object
+per call - so `UsersModule` importing `AccountsModule.forRoot()` would build a
+second better-auth against a second session store. `AccountsModule` and
+`AuditModule` are decorated classes for exactly that reason; a class is one
+reference however many modules import it.
 
-MIT
+**Infrastructure here is `global: true`, features are imported.** There is one
+database, one Redis client, one bucket, one image pipeline and one queue connection
+per process, and a feature module cannot construct its own without opening a second
+connection - so every module under `infra/` publishes a named `exports` list app-wide.
+Feature modules (`AccountsModule`, `AuditModule`) are imported normally, and export
+only what another feature legitimately calls: `CurrentUser` and `AuditService`, never
+a repository.
+
+**Module middleware covers the declaring module's controllers and nothing it
+imports.** `QueuesModule` lists `QueueUnavailableMiddleware`, which is what turns an
+unreachable broker into a 503 for the five queue routes - it replaced a private
+`degrades()` helper wrapped around every route body. The absent ancestor layer is why
+`AuditContextMiddleware` stays app-level: the writes it stamps include better-auth's
+own sign-up route, and that controller lives inside `@dunx/auth`'s `AuthModule`, not
+inside `AccountsModule`.
+
+**`@dunx/testing` inherits nothing from `src/main.ts`.** `createTestServer` takes
+`middleware` and `onError`, and a suite that omits them gets a server with no
+guards and no error mapper that still boots and still answers. That is why
+`src/http.options.ts` exists.
+
+**Repeat `tags` on every method-level `@ApiDoc`.** A method-level `@ApiDoc`
+replaces the class-level one wholesale, so a class tag is dropped and the
+operation silently falls back to the class-name default.
+
+**`betterAuthDocument`'s `basePath` is prefixed again by `setGlobalPrefix`.**
+Passing `AuthOptions.basePath` verbatim, which is what its documentation says,
+gives you `/api/api/auth/sign-in/email` with no warning. Pass the **mount** -
+`/auth`, the second argument to `AuthModule.forRootAsync` - and let the explorer
+add the one prefix.
+
+**A user row is not a user.** Inserting into `user` gives you a row with no
+`account` row and therefore no password hash, so it can never sign in.
+`UsersService.create` and `AuthAdminSeeder` both go through
+`auth.api.signUpEmail`; the drizzle seeder deliberately creates directory entries
+that cannot authenticate, and says so.
+
+**better-auth's drizzle adapter matches on the export name.** It looks the model
+up as `fullSchema['user']`, so a barrel that exports `users` needs the explicit
+`schema: { user: users, ... }` mapping, whatever `drizzleDatabase`'s
+documentation says. Without it the first query is
+`BetterAuthError: The model "user" was not found in the schema object`.
+
+**A global guard also guards the 404.** `listen()` puts the global middleware in
+front of the not-found fallback, which is what gets an unmatched path logged and
+given a request id - and means an anonymous request for a path that does not
+exist is a 401 rather than a 404. Pinned in `src/users/users.spec.ts`.
+
+**A process that touched a down Redis does not exit on `SIGTERM`.** bullmq holds
+a connection whose retry timer outlives `close()`. Measured here at 30 seconds
+and counting, and this app enqueues at boot, so it is squarely in that case.
+`src/core/force-exit.ts` is the workaround: `process.exit(0)` once `app.closed`
+resolves, with a referenced timer as the backstop.
+
+**Rate-limit counters outlive the process.** They are in Redis, so two
+deployments sharing one need two `THROTTLE_PREFIX` values, and a test run needs
+its own or it inherits the last one's counters.
+
+**No response bodies in the OpenAPI document.** `RouteSchemas` has `body`,
+`query` and `params` and no `response`, so every success response is a bare
+description. `SanitizedUser` and friends carry `.meta({ id })` and never reach
+`components`. `src/openapi.spec.ts` pins this so it is visible when it changes.
+
+**`requestLogging.ignore` also turns off request ids.** `x-request-id` is set by
+the request-logging middleware, so an ignored path gets no correlation header and
+no async context either.
+
+**Column names are spelled out.** `@dunx/infra`'s `SqliteOptions` forwards only
+`schema` to `drizzle()`, so `casing: 'snake_case'` and drizzle's query `logger`
+are unreachable.
+
+**Emitted JS needs `depsPlugin`, not the preload.** The preload plugin's filter is
+`/\.tsx?$/`, so a plainly transpiled `dist/` fails at boot with a message telling
+you to add a preload that is already there and cannot help. `scripts/build.ts`
+uses `Bun.build({ plugins: [depsPlugin] })`.
+
+## Configuration
+
+Every variable is in `.env.example` and validated once at boot by
+`src/config/env.validation.ts`. `API_PORT` has no default, so an empty
+environment fails with a message naming it. `DB_TYPE=postgres` is rejected: the
+data layer is synchronous `bun:sqlite` and `Bun.SQL` is a socket.
+
+Four cross-field rules exist because a single field's validator cannot see them:
+`POSTGRES_URL` when `DB_TYPE=postgres`, `S3_BUCKET` when `STORAGE_DRIVER=s3`,
+`REDIS_URL` when `AUTH_SESSION_STORE=redis`, and `BETTER_AUTH_SECRET` when
+`APP_ENV=prod`. The last one is why the Docker image refuses to boot without a
+secret: the development fallback is a constant in this repository, and anyone
+holding it can mint a session.
+
+`REDIS_URL` is optional everywhere. Absent, the cache reports itself degraded,
+the rate limiter stops counting rather than refusing every request, the queue
+routes answer 503 in single-digit milliseconds and websocket fan-out stays local
+to the process. The one thing that does **not** degrade is
+`AUTH_SESSION_STORE=redis`, which is why it is an explicit opt-in: a swallowed
+`null` from a session read would sign every user out.
+
+## Testing
+
+Three layers, split by filename, the way the NestJS template split them.
+
+- `*.test.ts` are unit tests: `createTestApp` with `overrides` replacing
+  collaborators. A collaborator has to be listed in the fixture module's
+  `providers` before it can be overridden, even though it would self-bind.
+- `*.spec.ts` are integration tests: `createTestServer` on port 0 against
+  `:memory:` SQLite, so the migrations and the triggers run for real.
+- `e2e/**/*.e2e.ts` spawn `bun src/main.ts` as a separate process and drive it
+  over HTTP, which is the only layer that covers the preload, `.env` loading, a
+  real database file and `SIGTERM` shutdown.
+
+Every suite authenticates through `POST /api/auth/sign-in/email` and the bearer
+token that comes back, so the tests go through the same `SessionGuard` as
+production rather than a test-only door.
+
+Service-dependent assertions are probe-gated, never skipped by convention: the
+queue suite enqueues once and only spawns a worker if that answered, and
+`src/infra/redis/redis.spec.ts` asserts **both** sides - a broker pointed at a
+closed port has to degrade, and a live one has to actually count. CI runs the
+whole thing twice, once with nothing running and once with Valkey up.
+
+## Licence
+
+MIT.

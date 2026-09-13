@@ -1,10 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript"],
-  "options": {
-    "typeAware": true,
-    "typeCheck": true
-  },
   "categories": {
     "correctness": "error"
   },
@@ -20,17 +16,16 @@
         "caughtErrors": "none"
       }
     ],
+    "prefer-const": "error",
     "max-lines": ["error", { "max": 500, "skipBlankLines": true }]
   },
   "ignorePatterns": [
-    "**/dist/**",
+    "dist",
+    "coverage",
+    "node_modules",
+    "data",
+    ".tmp",
     "**/*.d.ts",
-    "**/*.test.ts",
-    "**/*.int.ts",
-    "**/*.e2e.ts",
-    "coverage/**",
-    "node_modules/**",
-    ".tmp/**",
-    "public/**"
+    "src/infra/db/migrations"
   ]
 }

@@ -1,5 +1,4 @@
 {
-  "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "semi": true,
   "tabWidth": 2,
   "printWidth": 80,
@@ -7,14 +6,15 @@
   "singleQuote": true,
   "trailingComma": "all",
   "bracketSpacing": true,
-  "arrowParens": "avoid",
+  "arrowParens": "always",
   "useTabs": false,
-  "ignorePatterns": [
-    "node_modules/**",
-    "dist/**",
-    "coverage/**",
-    ".tmp/**",
-    "public/**",
-    "bun.lock"
+  "ignore": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "data",
+    ".tmp",
+    "bun.lock",
+    "src/infra/db/migrations"
   ]
 }

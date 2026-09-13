@@ -1,24 +1,68 @@
-import { createZodDto } from 'nestjs-zod';
+import type { RouteSchemas } from '@dunx/http';
 import { z } from 'zod';
-import { pageOptionsSchema } from '@/core/pagination/dto/page-options.dto';
-import { emailSchema } from '@/core/zod/schemas';
-import { userSelectSchema } from '../entity/user.entity';
+import { paginatedOf, pageOptionsSchema } from '../../core/pagination.dto.js';
+import { UserRole } from '../schema/user.schema.js';
 
 /**
- * Editable user fields (admin PATCH), derived from the user row schema so the
- * field set stays in sync. `email` is overridden with the stricter validation
- * schema, and every field is optional. Credentials are set via the auth flows
- * (hashed), never here.
+ * `.meta({ id })` is what lifts a schema into `components/schemas` and makes
+ * `@dunx/openapi` emit a `$ref` instead of inlining it.
  */
-export class UpdateUserDto extends createZodDto(
-  userSelectSchema
-    .pick({ name: true, image: true, role: true, banned: true })
-    .extend({ email: emailSchema })
-    .partial(),
-) {}
+export const SanitizedUser = z
+  .object({
+    id: z.uuid(),
+    email: z.email(),
+    name: z.string(),
+    role: z.enum([UserRole.ADMIN, UserRole.USER]),
+    banned: z.boolean(),
+    emailVerified: z.boolean(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .meta({
+    id: 'SanitizedUser',
+    title: 'A user, without anything secret on it',
+  });
 
-export const getUsersQuerySchema = pageOptionsSchema.extend({
+export type SanitizedUser = z.infer<typeof SanitizedUser>;
+
+export const PaginatedUsers = paginatedOf(SanitizedUser, 'PaginatedUsers');
+
+export const UserIdParams = z.object({ userId: z.uuid() });
+
+export const ListUsersQuery = pageOptionsSchema.extend({
+  role: z.enum([UserRole.ADMIN, UserRole.USER]).optional(),
   banned: z.stringbool().optional(),
 });
 
-export class GetUsersQueryDto extends createZodDto(getUsersQuerySchema) {}
+export const CreateUser = z
+  .object({
+    email: z.email(),
+    name: z.string().min(2).max(80),
+    // The route goes through better-auth's own sign-up, so a created user has a
+    // real credential and can sign in. The bounds are better-auth's own.
+    password: z.string().min(8).max(64),
+    role: z.enum([UserRole.ADMIN, UserRole.USER]).default(UserRole.USER),
+  })
+  .meta({ id: 'CreateUser', title: 'Create a user' });
+
+export type CreateUser = z.infer<typeof CreateUser>;
+
+export const UpdateUser = z
+  .object({
+    name: z.string().min(2).max(80).optional(),
+    role: z.enum([UserRole.ADMIN, UserRole.USER]).optional(),
+    banned: z.boolean().optional(),
+  })
+  .meta({ id: 'UpdateUser', title: 'Patch a user' });
+
+export type UpdateUser = z.infer<typeof UpdateUser>;
+
+export const listUsers = {
+  query: ListUsersQuery,
+} as const satisfies RouteSchemas;
+export const oneUser = { params: UserIdParams } as const satisfies RouteSchemas;
+export const createUser = { body: CreateUser } as const satisfies RouteSchemas;
+export const updateUser = {
+  params: UserIdParams,
+  body: UpdateUser,
+} as const satisfies RouteSchemas;

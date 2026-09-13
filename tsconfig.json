@@ -1,25 +1,21 @@
 {
   "compilerOptions": {
-    "module": "ESNext",
-    "moduleResolution": "bundler",
     "target": "ESNext",
-    "jsx": "react",
+    "lib": ["ESNext"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["bun"],
     "strict": true,
-    "esModuleInterop": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "declaration": false,
-    "outDir": "./dist",
-    "types": ["bun", "multer"],
-    "paths": {
-      "@/*": ["./src/*"]
-    },
-    "incremental": false,
-    "removeComments": true,
-    "sourceMap": true
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["@types/**/*.d.ts", "src/**/*", "e2e/**/*", "scripts/**/*"],
+  "include": ["src", "scripts", "e2e", "drizzle.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

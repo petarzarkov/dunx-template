@@ -1,15 +1,5 @@
-import { Module } from '@nestjs/common';
-import { TerminusModule } from '@nestjs/terminus';
-import { HealthController } from './health.controller';
+import { Module } from '@dunx/core';
+import { HealthController } from './health.controller.js';
 
-const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 10_000;
-
-@Module({
-  imports: [
-    TerminusModule.forRoot({
-      gracefulShutdownTimeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
-    }),
-  ],
-  controllers: [HealthController],
-})
+@Module({ controllers: [HealthController] })
 export class HealthModule {}

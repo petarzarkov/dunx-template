@@ -4,33 +4,52 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
-import { createdAt, timestampMs, updatedAt, uuidPk } from '@/infra/db/columns';
-import { UserRole } from '../enum/user-role.enum';
+import {
+  createdAt,
+  timestampMs,
+  updatedAt,
+  uuidPk,
+} from '../../infra/db/columns.js';
+
+export const UserRole = Object.freeze({
+  ADMIN: 'admin',
+  USER: 'user',
+} as const);
+export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 
 /**
- * Better Auth core `user` table + the `admin` plugin fields (`role`, `banned`,
- * `banReason`, `banExpires`). Field names match Better Auth's native model
- * (`name`, `image`, `emailVerified`) so the session-user object returned by
- * Better Auth is structurally identical to a selected row — one `SanitizedUser`
- * type flows everywhere. Credentials (password) and OAuth links live in the
- * `account` table.
+ * Better Auth's `user` model, and the app's users table - one table, not two.
+ *
+ * `@dunx/auth` ships **no** schema: better-auth's tables are better-auth's, they
+ * change with its plugins, and its own CLI generates them
+ * (`bunx @better-auth/cli generate`). What is here is that output, reconciled
+ * with the columns this app already had, and the field *keys* are what the
+ * drizzle adapter matches on - the snake-case column names beside them are free
+ * to differ.
+ *
+ * `role`, `banned`, `banReason` and `banExpires` come from the `admin()` plugin,
+ * and `role` is what `@Roles()` reads through `SessionGuard`.
  */
 export const users = sqliteTable(
   'user',
   {
     id: uuidPk(),
-    email: text().notNull(),
-    emailVerified: integer({ mode: 'boolean' }).notNull().default(false),
-    name: text().notNull(),
-    image: text(),
-    role: text().$type<UserRole>().notNull().default(UserRole.USER),
-    banned: integer({ mode: 'boolean' }).notNull().default(false),
-    banReason: text(),
-    banExpires: timestampMs(),
+    email: text('email').notNull(),
+    emailVerified: integer('email_verified', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    name: text('name').notNull(),
+    image: text('image'),
+    role: text('role', { enum: [UserRole.ADMIN, UserRole.USER] })
+      .notNull()
+      .default(UserRole.USER),
+    banned: integer('banned', { mode: 'boolean' }).notNull().default(false),
+    banReason: text('ban_reason'),
+    banExpires: timestampMs('ban_expires'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  t => [uniqueIndex('UQ_user_email').on(t.email)],
+  (table) => [uniqueIndex('UQ_user_email').on(table.email)],
 );
 
 export type UserRow = typeof users.$inferSelect;

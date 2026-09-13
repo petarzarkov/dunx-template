@@ -1,25 +1,14 @@
-# Bun configuration
-# https://bun.sh/docs/runtime/bunfig
+# The one line that makes constructor injection work. @dunx/transform records each
+# class's constructor parameter types at load time so the container can resolve
+# them. Without it, boot fails naming the provider it could not build.
+preload = ["@dunx/transform/preload"]
 
-# Test taxonomy by file extension:
-#   - Unit:        src/**/*.test.ts  (pure, mocked deps, no I/O)
-#   - Integration: src/**/*.spec.ts  (real in-memory SQLite)
-#   - E2E:         e2e/**/*.e2e.ts   (live server)
-#
-# `bun test` auto-discovers *.test.ts / *.spec.ts, so bare `bun test` runs the
-# unit + integration suites (scoped to `root` below → the `src/` tree only, so
-# the live-server e2e files stay out). `test:unit` / `test:int` narrow that by
-# passing the `.test.ts` / `.spec.ts` substring as a path filter. E2E (*.e2e.ts)
-# is NOT auto-discovered — the `test:e2e` script runs it by passing explicit
-# paths from `find`.
 [test]
 root = "./src"
-
-# Coverage
+preload = ["@dunx/transform/preload"]
 coverageDir = "coverage"
-coverageReporter = ["text", "lcov"] # default ["text"]
-coverageSkipTestFiles = true # keep test files out of coverage stats
-# coverageThreshold = { lines = 0.7, functions = 0.6, statements = 0.7 }
+coverageReporter = ["text", "lcov"]
+coverageSkipTestFiles = true
 
 [test.reporter]
 junit = "coverage/test-results.xml"

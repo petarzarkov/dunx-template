@@ -1,44 +1,17 @@
-# Dependencies
+# Deny-list, not an allow-list, so bunfig.toml cannot be dropped by accident.
+# `bun src/main.ts` needs it: without the preload, dependency injection fails at
+# boot and the error will point at bunfig.toml from inside the container.
 node_modules
-.tmp
-
-# Build output (will be created in container)
 dist
-
-# Development files
-.git
-.gitignore
-.env*
-!.env.example
-
-# IDE and editor
-.vscode
-.idea
-*.swp
-*.swo
-.cursor
-
-# Testing
-e2e
-*.spec.ts
-*.test.ts
 coverage
-
-# Documentation
-*.md
-
-# Logs
-logs
-*.log
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Bun
-bun.lockb.backup
-
-# Docker
-Dockerfile*
-docker-compose*.yml
-.dockerignore
+data
+.tmp
+.git
+.github
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+README.md
+MAPPING.md

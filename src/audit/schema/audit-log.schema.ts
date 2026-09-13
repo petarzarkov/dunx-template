@@ -1,26 +1,39 @@
 import { index, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-import { createdAt, uuidPk } from '@/infra/db/columns';
-import { AuditAction } from '../enum/audit-action.enum';
+import { createdAt, uuidPk } from '../../infra/db/columns.js';
+
+export const AuditAction = Object.freeze({
+  INSERT: 'INSERT',
+  UPDATE: 'UPDATE',
+  DELETE: 'DELETE',
+} as const);
+export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction];
 
 export const auditLog = sqliteTable(
   'audit_log',
   {
     id: uuidPk(),
-    actorId: text(),
-    action: text().$type<AuditAction>().notNull(),
-    entityName: text().notNull(),
-    entityId: text().notNull(),
-    oldValue: text({ mode: 'json' }).$type<Record<string, unknown>>(),
-    newValue: text({ mode: 'json' }).$type<Record<string, unknown>>(),
+    actorId: text('actor_id'),
+    action: text('action', {
+      enum: [AuditAction.INSERT, AuditAction.UPDATE, AuditAction.DELETE],
+    }).notNull(),
+    entityName: text('entity_name').notNull(),
+    entityId: text('entity_id').notNull(),
+    oldValues: text('old_values', { mode: 'json' }).$type<Record<
+      string,
+      unknown
+    > | null>(),
+    newValues: text('new_values', { mode: 'json' }).$type<Record<
+      string,
+      unknown
+    > | null>(),
     createdAt: createdAt(),
   },
-  t => [
-    index('audit_actor_id_index').on(t.actorId),
-    index('audit_action_index').on(t.action),
-    index('audit_entity_name_index').on(t.entityName),
-    index('audit_entity_id_index').on(t.entityId),
+  (table) => [
+    index('audit_actor_id_index').on(table.actorId),
+    index('audit_action_index').on(table.action),
+    index('audit_entity_name_index').on(table.entityName),
+    index('audit_entity_id_index').on(table.entityId),
   ],
 );
 
 export type AuditLogRow = typeof auditLog.$inferSelect;
-export type NewAuditLogRow = typeof auditLog.$inferInsert;

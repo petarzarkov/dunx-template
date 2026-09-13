@@ -1,148 +1,98 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import type { SanitizedUser } from '@/users/entity/user.entity';
-import { getTestContext } from '../setup/context';
+import { describe, expect, test } from 'bun:test';
+import { getTestContext } from '../setup/context.js';
 
-interface UsersResponse {
-  data: SanitizedUser[];
-  meta: {
-    take: number;
-    hasNextPage: boolean;
-    hasPreviousPage: boolean;
-    nextCursor: string | null;
-    previousCursor: string | null;
-  };
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  banned: boolean;
 }
 
-describe('Users Cursor Pagination (e2e)', () => {
-  const ctx = getTestContext();
-  const createdUserIds: string[] = [];
-
-  afterEach(() => {
-    ctx.reset();
+describe('users against a live server', () => {
+  test('the guard rejects an anonymous caller', async () => {
+    const { api } = getTestContext();
+    const { status } = await api.as(undefined).json('users');
+    expect(status).toBe(401);
   });
 
-  test('should return cursor pagination meta on first page', async () => {
-    await ctx.loginAsAdmin();
+  test('a created user has a real credential and can sign in', async () => {
+    const { api } = getTestContext();
+    const email = `signin-${crypto.randomUUID()}@example.com`;
 
-    const response = await ctx.api.get<UsersResponse>('/api/users?take=5');
+    const created = await api.post<User>('users', {
+      email,
+      name: 'Sign In',
+      password: 'an-e2e-password',
+    });
+    expect(created.status).toBe(201);
 
+    const response = await api.as(undefined).raw('auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password: 'an-e2e-password' }),
+    });
     expect(response.status).toBe(200);
-    expect(response.data).toHaveProperty('data');
-    expect(response.data).toHaveProperty('meta');
-    expect(Array.isArray(response.data.data)).toBe(true);
-    expect(response.data.meta.take).toBe(5);
-    expect(response.data.meta.hasPreviousPage).toBe(false);
-    expect(response.data.meta.previousCursor).toBeNull();
-    expect(typeof response.data.meta.hasNextPage).toBe('boolean');
+    expect(response.headers.get('set-auth-token')).not.toBeNull();
   });
 
-  test('should paginate forward through users with no duplicates', async () => {
-    // Wait for throttle window to reset (short throttle: 10 req/1s)
-    await Bun.sleep(1100);
-    await ctx.loginAsAdmin();
+  test('create, read, patch and delete round-trip through a real file', async () => {
+    const { api, db } = getTestContext();
+    const email = `e2e-${crypto.randomUUID()}@example.com`;
 
-    // Create extra users to ensure multiple pages
-    for (let i = 0; i < 3; i++) {
-      const email = `cursor-test-${Date.now()}-${i}@e2e-test.com`;
-      await ctx.api.signUp({ email, password: 'TestPass123!' });
-      const user = ctx.db.getUserByEmail(email);
-      if (user) createdUserIds.push(user.id);
-    }
+    const created = await api.post<User>('users', {
+      email,
+      name: 'Round Trip',
+      password: 'an-e2e-password',
+    });
+    expect(created.status).toBe(201);
 
-    await ctx.loginAsAdmin();
+    const read = await api.json<User>(`users/${created.body.id}`);
+    expect(read.status).toBe(200);
+    expect(read.body.email).toBe(email);
 
-    // Page 1
-    const page1 = await ctx.api.get<UsersResponse>('/api/users?take=2');
-    expect(page1.status).toBe(200);
-    expect(page1.data.data.length).toBe(2);
-    expect(page1.data.meta.hasPreviousPage).toBe(false);
+    const patched = await api.json<User>(`users/${created.body.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: 'Patched' }),
+    });
+    expect(patched.body.name).toBe('Patched');
 
-    if (!page1.data.meta.nextCursor) return;
-    expect(page1.data.meta.hasNextPage).toBe(true);
+    // Three audit rows so far, all written by the triggers rather than by code:
+    // the INSERT from better-auth's sign-up, the UPDATE that applies the role, and
+    // the UPDATE from the PATCH.
+    const before = db.countAuditRows(created.body.id);
+    expect(before).toBe(3);
 
-    // Page 2
-    const page2 = await ctx.api.get<UsersResponse>(
-      `/api/users?take=2&cursor=${page1.data.meta.nextCursor}`,
-    );
-    expect(page2.status).toBe(200);
-    expect(page2.data.meta.hasPreviousPage).toBe(true);
-    expect(page2.data.meta.previousCursor).not.toBeNull();
-
-    // Verify no overlap
-    const page1Ids = new Set(page1.data.data.map(u => u.id));
-    for (const user of page2.data.data) {
-      expect(page1Ids.has(user.id)).toBe(false);
-    }
-
-    // Clean up
-    for (const id of createdUserIds) {
-      ctx.db.auditLogs.delete({ entityId: id });
-      ctx.db.users.delete({ id });
-    }
-    createdUserIds.length = 0;
+    const deleted = await api.raw(`users/${created.body.id}`, {
+      method: 'DELETE',
+    });
+    expect(deleted.status).toBe(204);
+    expect(db.countAuditRows(created.body.id)).toBe(before + 1);
   });
 
-  test('should navigate backward without overlapping page 2', async () => {
-    // Wait for throttle window to reset (short throttle: 10 req/1s)
-    await Bun.sleep(1100);
-    await ctx.loginAsAdmin();
-
-    // Create extra users
-    for (let i = 0; i < 3; i++) {
-      const email = `cursor-back-${Date.now()}-${i}@e2e-test.com`;
-      await ctx.api.signUp({ email, password: 'TestPass123!' });
-      const user = ctx.db.getUserByEmail(email);
-      if (user) createdUserIds.push(user.id);
-    }
-
-    await ctx.loginAsAdmin();
-
-    // Page 1
-    const page1 = await ctx.api.get<UsersResponse>('/api/users?take=2');
-    expect(page1.status).toBe(200);
-    if (!page1.data.meta.nextCursor) return;
-
-    // Page 2
-    const page2 = await ctx.api.get<UsersResponse>(
-      `/api/users?take=2&cursor=${page1.data.meta.nextCursor}`,
-    );
-    expect(page2.status).toBe(200);
-    expect(page2.data.meta.previousCursor).not.toBeNull();
-
-    // Navigate backward
-    const backPage = await ctx.api.get<UsersResponse>(
-      `/api/users?take=2&cursor=${page2.data.meta.previousCursor}&direction=backward`,
-    );
-    expect(backPage.status).toBe(200);
-
-    // Backward page should not overlap with page 2
-    const page2Ids = new Set(page2.data.data.map(u => u.id));
-    for (const user of backPage.data.data) {
-      expect(page2Ids.has(user.id)).toBe(false);
-    }
-
-    // Backward page should indicate there is a next page
-    expect(backPage.data.meta.hasNextPage).toBe(true);
-    expect(backPage.data.meta.nextCursor).not.toBeNull();
-
-    // Clean up
-    for (const id of createdUserIds) {
-      ctx.db.auditLogs.delete({ entityId: id });
-      ctx.db.users.delete({ id });
-    }
-    createdUserIds.length = 0;
+  test('validation rejects a bad body with the issue list', async () => {
+    const { api } = getTestContext();
+    const { status, body } = await api.post<{
+      message: string;
+      issues: { path: string }[];
+    }>('users', { email: 'nope', name: '', password: 'x' });
+    expect(status).toBe(400);
+    expect(body.message).toBe('Invalid body');
+    expect(body.issues.length).toBeGreaterThan(0);
   });
 
-  test('should reject an invalid cursor with 400', async () => {
-    // Wait for throttle window to reset (short throttle: 10 req/1s)
-    await Bun.sleep(1100);
-    await ctx.loginAsAdmin();
-
-    const response = await ctx.api.get<{ message: string }>(
-      '/api/users?cursor=garbage',
+  test('the OpenAPI document is served and parses', async () => {
+    const { api } = getTestContext();
+    const { status, body } = await api.json<{ openapi: string }>(
+      'openapi.json',
     );
+    expect(status).toBe(200);
+    expect(body.openapi).toBe('3.1.0');
+  });
 
-    expect(response.ok).toBe(false);
-    expect(response.status).toBe(400);
+  test('the explorer page is served as HTML', async () => {
+    const { api } = getTestContext();
+    const response = await api.raw('docs');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
   });
 });

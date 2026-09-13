@@ -1,389 +1,121 @@
-import { HttpStatus, Optional } from '@nestjs/common';
+import { Auth, rolesOf } from '@dunx/auth';
+import { Logger } from '@dunx/core';
 import {
-  ConnectedSocket,
-  MessageBody,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-  SubscribeMessage,
-  WebSocketGateway,
-  WebSocketServer,
-} from '@nestjs/websockets';
-import { Emitter } from '@socket.io/redis-emitter';
-import { AuthService } from '@thallesp/nestjs-better-auth';
-import { fromNodeHeaders } from 'better-auth/node';
-import { ExtendedError, Socket } from 'socket.io';
-import { AIService } from '@/ai/services/ai.service';
-import type { Auth } from '@/auth/auth.config';
-import { REQUEST_ID_HEADER_KEY } from '@/constants';
-import { ContextLogger, ContextService } from '@arkv/nestjs-context-logger';
-import { RedisService } from '@/infra/redis/services/redis.service';
-import { EventMap, EventType } from '@/notifications/events/events';
-import { UserRole } from '@/users/enum/user-role.enum';
-import {
-  AIMessageRequest,
-  ChatMessage,
-  ExtendedSocket,
-  WebSocketBaseMessage,
-  WebSocketEmitEvents,
-  WSServer,
-} from './events.dto';
+  Gateway,
+  HttpStatusCode,
+  OnClose,
+  OnMessage,
+  OnOpen,
+  OnUpgrade,
+  type Socket,
+} from '@dunx/http';
+import type { BunRequest } from 'bun';
+import { UserRole } from '../../users/schema/user.schema.js';
+import { EventsPublisher } from './events.publisher.js';
+import { CLIENT_EVENTS, EVENTS, TOPICS, userTopic } from './events.js';
 
-export const ROOMS = {
-  ADMINS: 'admins',
-  CHAT: 'chat',
-  user: (id: string) => `user_${id}`,
-};
-
-type NextFn = (error?: ExtendedError) => void;
-type MiddlewareFn = (socket: Socket, next: NextFn) => Promise<void>;
+export interface SocketContext {
+  readonly userId: string;
+  readonly email: string;
+  readonly roles: readonly string[];
+}
 
 /**
- * We will use the SocketConfigAdapter to configure the WebSocket gateway,
- * so we don't need to pass any options here.
+ * Served by the same `Bun.serve` call as the HTTP routes: `HttpFactory` discovers
+ * the gateway from `providers`, and `listen()` mounts the upgrade as a native
+ * route. There is no second server, no adapter and no `socket.io`.
+ *
+ * The NestJS template used `@WebSocketGateway()` with `socket.io`, a
+ * `SocketConfigAdapter` to inject options, two `io.use()` middlewares for context
+ * and auth, `@socket.io/redis-adapter` with two extra connections for multi-node
+ * fan-out and `@socket.io/redis-emitter` for the worker. Here: one class, one
+ * `@OnUpgrade` for auth, Bun's own pub/sub for rooms, and one `RedisRelay` in
+ * `HttpOptions` for fan-out.
  */
-@WebSocketGateway()
-export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server: WSServer | null = null; // Null in Worker Process
-
-  emitter: Emitter<WebSocketEmitEvents> | null = null; // Null in Main Process
-
-  io!: WSServer | Emitter<WebSocketEmitEvents>;
-
+@Gateway('/ws')
+export class EventsGateway {
   constructor(
-    // Only used by the WS auth middleware, which runs in the main process
-    // (where a WS server exists). Optional so the gateway can still be
-    // constructed inside the sandboxed job-worker process — whose `JobModule`
-    // context has no Better Auth `AuthModule` — where it is never used.
-    @Optional() private readonly authService: AuthService<Auth> | undefined,
-    private readonly logger: ContextLogger,
-    private readonly contextService: ContextService,
-    private readonly aiService: AIService,
-    private readonly redisService: RedisService,
+    private readonly auth: Auth,
+    private readonly events: EventsPublisher,
+    private readonly logger: Logger,
   ) {}
 
-  onModuleInit() {
-    // Check if we are in the worker process (where server is null)
-    if (!this.server) {
-      const redisClient = this.redisService.newConnection('emitter', {
-        db: 4,
+  /**
+   * Runs before the socket exists, and is the only place a connection can be
+   * refused: return a `Response` and there is no upgrade. Anything else returned
+   * becomes `socket.data.context`, which is how the authenticated user is carried
+   * onto the connection without a second lookup per frame.
+   *
+   * It is handed the `BunRequest` because the upgrade really is a route - Bun
+   * matched it - so `Cookie` and `Authorization` are both readable, and better-auth
+   * reads whichever is present. That is the whole of the socket authentication:
+   * the same `api.getSession` the HTTP guard calls.
+   */
+  @OnUpgrade()
+  async upgrade(req: BunRequest): Promise<Response | SocketContext> {
+    const principal = await this.auth.api.getSession({ headers: req.headers });
+    if (principal === null) {
+      return new Response('UNAUTHENTICATED', {
+        status: HttpStatusCode.UNAUTHORIZED,
       });
-
-      this.emitter = new Emitter(redisClient);
-      this.io = this.emitter;
-    } else {
-      this.io = this.server;
     }
-
-    if (!this.io) {
-      throw new Error('Gateway IO not initialized');
-    }
+    const { user } = principal;
+    return { userId: user.id, email: user.email, roles: rolesOf(user) };
   }
 
-  afterInit(server: WSServer) {
-    server.use(this.#createContextMiddleware());
-    server.use(this.#createAuthMiddleware());
+  @OnOpen()
+  opened(socket: Socket<SocketContext>): void {
+    const { userId, roles, email } = socket.data.context;
+
+    // Bun's own pub/sub - a topic lives in the runtime, not in a JavaScript map,
+    // and with the relay configured it spans processes too.
+    socket.subscribe(userTopic(userId));
+    socket.subscribe(TOPICS.CHAT);
+    if (roles.includes(UserRole.ADMIN)) socket.subscribe(TOPICS.ADMINS);
+
+    socket.send(
+      JSON.stringify({
+        event: EVENTS.CONNECTED,
+        data: { userId, email, rooms: this.rooms(roles, userId) },
+      }),
+    );
+    this.logger.info('socket opened', { userId });
   }
 
   /**
-   * Context middleware - wraps the entire WS lifecycle with context and error handling.
-   * This should be registered first to catch any errors from downstream middleware.
+   * `@OnMessage('chatMessage')` receives the **decoded payload**, not the raw
+   * frame, and whatever it returns is replied to the sender under the same event
+   * name. The wire envelope is `{"event":"chatMessage","data":...}`.
    */
-  #createContextMiddleware(): MiddlewareFn {
-    return async (socket: Socket, next: NextFn) => {
-      const context = this.contextService.getContext();
-      const requestId =
-        (socket.handshake.headers?.[REQUEST_ID_HEADER_KEY] as string) ||
-        context.requestId ||
-        crypto.randomUUID();
-      socket.handshake.headers[REQUEST_ID_HEADER_KEY] = requestId;
-
-      void this.contextService.runWithContext(
-        {
-          ...context,
-          flow: 'ws',
-          context: 'EventsGateway',
-          event: socket.handshake.url,
-          requestId,
-          forwardedFor: socket.handshake.headers['x-forwarded-for'],
-          ipAddress: socket.handshake.address,
-          userAgent: socket.handshake.headers['user-agent'],
-          contentType: socket.handshake.headers['content-type'],
-          accept: socket.handshake.headers.accept,
-          origin: socket.handshake.headers.origin,
-        },
-        async () => {
-          try {
-            next();
-          } catch (error) {
-            this.#handleMiddlewareError(error, next);
-          }
-        },
-      );
-    };
-  }
-
-  /**
-   * Auth middleware - validates JWT token and attaches user to socket data.
-   */
-  #createAuthMiddleware(): MiddlewareFn {
-    return async (socket: Socket, next: NextFn) => {
-      try {
-        const authHeader =
-          socket.handshake.auth.token || socket.handshake.headers.authorization;
-
-        if (!authHeader) {
-          return next(
-            this.#buildExtendedError(
-              'Authentication token missing',
-              HttpStatus.UNAUTHORIZED,
-              'UNAUTHORIZED',
-            ),
-          );
-        }
-
-        if (!this.authService) {
-          throw new Error('AuthService unavailable in this process');
-        }
-
-        const token = authHeader.split(' ')[1];
-        const session = await this.authService.api.getSession({
-          headers: fromNodeHeaders({ authorization: `Bearer ${token}` }),
-        });
-        if (!session?.user) {
-          return next(
-            this.#buildExtendedError(
-              'Unauthorized',
-              HttpStatus.UNAUTHORIZED,
-              'UNAUTHORIZED',
-            ),
-          );
-        }
-
-        socket.data.user = session.user;
-        this.contextService.updateContext({
-          userId: session.user.id,
-          userEmail: session.user.email,
-          userRoles: session.user.role ? [session.user.role] : [],
-        });
-
-        next();
-      } catch (error) {
-        this.#handleMiddlewareError(error, next);
-      }
-    };
-  }
-
-  #handleMiddlewareError(error: unknown, next: NextFn): void {
-    this.logger.error('WS Middleware Error', { error });
-
-    if (error instanceof Error) {
-      next(
-        this.#buildExtendedError(
-          error.message,
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          'INTERNAL_SERVER_ERROR',
-        ),
-      );
-    } else {
-      next(
-        this.#buildExtendedError(
-          'Internal server error',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          'INTERNAL_SERVER_ERROR',
-        ),
-      );
+  @OnMessage(CLIENT_EVENTS.CHAT_MESSAGE)
+  chat(
+    text: unknown,
+    socket: Socket<SocketContext>,
+  ): { delivered: number } | { error: string } {
+    if (typeof text !== 'string' || text.length === 0 || text.length > 1000) {
+      return { error: 'a chat message is a string of 1 to 1000 characters' };
     }
-  }
-
-  async handleConnection(client: ExtendedSocket) {
-    const user = client.data.user;
-    const userRoom = ROOMS.user(user.id);
-    const rooms = [userRoom, ROOMS.CHAT];
-    if (user.role === UserRole.ADMIN) {
-      rooms.push(ROOMS.ADMINS);
-    }
-
-    await client.join(rooms);
-    this.logger.log(
-      `WS Connected: ${user.email} (${client.id}) joined rooms ${rooms.join(', ')}`,
-      {
-        payload: user,
-      },
-    );
-
-    client.emit('connected', {
-      message: `Connected to WS with id ${client.id}`,
-      payload: user,
+    const { userId, email } = socket.data.context;
+    // Published rather than `socket.publish`, so the frame goes through the relay
+    // and reaches the other nodes as well as this one's subscribers.
+    this.events.publish(TOPICS.CHAT, EVENTS.MESSAGE, {
+      from: email,
+      userId,
+      text,
     });
-
-    // Notify chat room that user joined
-    this.io.to(ROOMS.CHAT).emit('userJoined', {
-      username: user.name || user.email?.split('@')[0],
-      timestamp: new Date(),
-    });
-
-    // Send user count
-    const chatRoom = this.server?.sockets.adapter.rooms.get(ROOMS.CHAT);
-    const userCount = chatRoom ? chatRoom.size : 0;
-    this.io.to(ROOMS.CHAT).emit('userCount', userCount);
+    return { delivered: 1 };
   }
 
-  handleDisconnect(client: ExtendedSocket) {
-    const user = client.data.user;
-
-    this.logger.log(`WS Disconnected: ${client.id}`, {
-      payload: user,
-      requestId: client.handshake.headers[REQUEST_ID_HEADER_KEY],
-    });
-
-    // Notify chat room that user left
-    if (user) {
-      this.io.to(ROOMS.CHAT).emit('userLeft', {
-        username: user.email,
-        timestamp: new Date(),
-      });
-
-      // Send updated user count
-      const chatRoom = this.server?.sockets.adapter.rooms.get(ROOMS.CHAT);
-      const userCount = chatRoom ? chatRoom.size : 0;
-      this.io.to(ROOMS.CHAT).emit('userCount', userCount);
-    }
-  }
-
-  @SubscribeMessage('chatMessage')
-  handleChatMessage(
-    @MessageBody() data: { message: string },
-    @ConnectedSocket() client: ExtendedSocket,
-  ) {
-    const user = client.data.user;
-    const chatMessage: ChatMessage = {
-      username: user.name || user.email?.split('@')[0],
-      message: data.message,
-      timestamp: new Date(),
-      picture: user.image,
-    };
-    this.io.to(ROOMS.CHAT).emit('message', chatMessage);
-    return { event: 'messageSent', data: { success: true } };
-  }
-
-  @SubscribeMessage('aiRequest')
-  async handleAIRequest(
-    @MessageBody()
-    data: AIMessageRequest,
-    @ConnectedSocket() client: ExtendedSocket,
-  ) {
-    const requestId = crypto.randomUUID();
-    const user = client.data.user;
-    try {
-      const stream = this.aiService.streamProvider(
-        data.provider,
-        data.model,
-        data.prompt,
-      );
-
-      for await (const chunk of stream) {
-        client.emit('aiMessageChunk', {
-          requestId,
-          chunk,
-          provider: data.provider,
-          model: data.model,
-          done: false,
-          username: user.name || user.email?.split('@')[0],
-        });
-      }
-
-      // Send completion signal
-      client.emit('aiMessageChunk', {
-        requestId,
-        chunk: '',
-        provider: data.provider,
-        model: data.model,
-        done: true,
-        username: user.name || user.email?.split('@')[0],
-      });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'AI request failed';
-      const errorName = error instanceof Error ? error.name : 'UnknownError';
-
-      this.logger.error('AI streaming failed', {
-        errorMessage,
-        errorName,
-        provider: data.provider,
-        model: data.model,
-        requestId,
-      });
-
-      client.emit('aiError', {
-        requestId,
-        error: errorMessage,
-        provider: data.provider,
-        model: data.model,
-        username: user.name || user.email?.split('@')[0],
-      });
-    }
-  }
-
-  sendNotification<K extends EventType, T extends EventMap[K]>(data: {
-    /**
-     * The user to send the notification to.
-     */
-    userId?: string;
-    emitToAdmins?: boolean;
-    eventType: K;
-    payload: T;
-  }) {
-    const { userId, emitToAdmins, eventType, payload } = data || {};
-    const rooms: string[] = [];
-
-    if (userId) {
-      rooms.push(ROOMS.user(userId));
-    }
-
-    if (emitToAdmins) {
-      rooms.push(ROOMS.ADMINS);
-    }
-
-    if (rooms.length === 0) {
-      this.logger.warn('No rooms to emit to', {
-        eventType,
-        payload,
-      });
-      return;
-    }
-
-    this.logger.verbose(
-      `Emitting '${eventType}' to rooms ${rooms.join(', ')}`,
-      {
-        userId,
-        emitToAdmins,
-        eventType,
-        payload,
-        rooms: rooms.join(', '),
-      },
-    );
-
-    this.io.to(rooms).emit('notification', {
-      event: eventType,
-      payload,
+  @OnClose()
+  closed(socket: Socket<SocketContext>, code: number): void {
+    this.logger.info('socket closed', {
+      userId: socket.data.context.userId,
+      code,
     });
   }
 
-  sendGlobalNotification(payload: WebSocketBaseMessage) {
-    this.logger.verbose(`Emitting to all`, {
-      payload,
-    });
-    this.io.emit('global_notification', payload);
-  }
-
-  #buildExtendedError(
-    message: string,
-    status: HttpStatus,
-    code: string,
-  ): ExtendedError {
-    const error: ExtendedError = new Error(message);
-    error.data = { status, code };
-    return error;
+  private rooms(roles: readonly string[], userId: string): readonly string[] {
+    const rooms = [userTopic(userId), TOPICS.CHAT];
+    return roles.includes(UserRole.ADMIN) ? [...rooms, TOPICS.ADMINS] : rooms;
   }
 }

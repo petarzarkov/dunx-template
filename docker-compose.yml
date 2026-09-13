@@ -1,66 +1,84 @@
-# Local dev infrastructure. Redis is required (BullMQ queue, Socket.io adapter,
-# throttler, cache). Postgres is optional — the app is SQLite-first (a local
-# file, no container). Start everything with `docker compose up -d` (Redis only)
-# or `docker compose --profile postgres up -d` to also bring up Postgres.
+# The backing services, and nothing else.
+#
+#   docker compose up -d      # valkey, which is all most work needs
+#   bun run dev               # the app, from source, with --watch
+#   bun run worker            # the consumer, in a second terminal
+#
+# **The app is deliberately not a service here, and neither is the worker.** A
+# compose file for a template exists to start the things you cannot run from source.
+# `bun --watch src/main.ts` is a better development loop than any container, and
+# building an image on every `up` to get a worse version of it is a tax with no
+# return. The worker was its own container for even less reason: it is a second
+# *process*, which is a real design decision, but `bun run worker` in another
+# terminal is that same decision without a build.
+#
+# The `Dockerfile` is still here and still built in CI. That is for deploying, which
+# is a different job from developing.
+#
+# **Needing this file at all is never a requirement.** Every area it starts degrades
+# on its own: with no Redis the cache reports itself degraded, the throttler stops
+# counting, the queue dashboard serves an empty board and websocket fan-out stays
+# local to the process; with no bucket the local disk backend is the default.
+# `bun run start`, `bun test` and `bun run test:e2e` all pass with none of this
+# running.
 services:
-  app-template-db:
-    image: public.ecr.aws/docker/library/postgres:17.5
-    # Optional — only started with `--profile postgres` (SQLite is the default DB).
-    profiles: ['postgres']
-    env_file:
-      - .env
-    ports:
-      - ${POSTGRES_PORT:-5438}:${POSTGRES_PORT:-5438}
-    volumes:
-      - ${POSTGRES_DATA_DIR:-./.tmp/postgres_data}:/var/lib/postgresql/data
-    networks:
-      - app
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5438}
-      PGPORT: ${POSTGRES_PORT:-5438}
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
-      interval: 2s
-      timeout: 5s
-      retries: 10
-
-  app-template-redis:
-    image: public.ecr.aws/docker/library/redis:8.4.0
-    env_file:
-      - .env
+  redis:
+    # Valkey rather than Redis: `Bun.RedisClient` speaks the same protocol, the
+    # licence is unambiguous, and `valkey://` is the first URL Bun's own default
+    # chain looks for.
+    image: valkey/valkey:8-alpine
+    container_name: dunx-template-valkey
+    restart: unless-stopped
     ports:
       - '${REDIS_PORT:-6379}:6379'
-    volumes:
-      - redis-data:/data
-    command: >
-      sh -c "
-      if [ -n \"$REDIS_PASSWORD\" ]; then
-        redis-server --requirepass $REDIS_PASSWORD
-      else
-        redis-server
-      fi
-      "
+    command: ['valkey-server', '--save', '60', '1', '--appendonly', 'no']
     healthcheck:
-      test:
-        - CMD
-        - sh
-        - -c
-        - 'if [ -n "$REDIS_PASSWORD" ]; then redis-cli -a $REDIS_PASSWORD ping; else redis-cli ping; fi'
+      test: ['CMD', 'valkey-cli', 'ping']
       interval: 10s
-      timeout: 5s
+      timeout: 3s
       retries: 5
-    networks:
-      - app
+
+  # S3, locally, and behind a profile so a plain `up` is Redis on its own:
+  #
+  #   docker compose --profile s3 up -d
+  #
+  # Then set STORAGE_DRIVER=s3 and the five S3_* variables in .env to exercise
+  # `Bun.S3Client` instead of `Bun.file`, with no code change - the backend is one
+  # `StorageOptions` subclass.
+  minio:
+    image: minio/minio:latest
+    container_name: dunx-template-minio
+    restart: unless-stopped
+    profiles: ['s3']
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    environment:
+      MINIO_ROOT_USER: dunx
+      MINIO_ROOT_PASSWORD: dunx-secret
+    command: ['server', '/data', '--console-address', ':9001']
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Creates the bucket once and exits, so `--profile s3 up` is enough to have
+  # somewhere to put an object.
+  minio-init:
+    image: minio/mc:latest
+    profiles: ['s3']
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 dunx dunx-secret &&
+      mc mb --ignore-existing local/dunx-template &&
+      echo 'bucket ready'
+      "
 
 volumes:
-  postgres-data:
-  redis-data:
-
-networks:
-  app:
-    name: app-network
-    driver: bridge
+  minio-data:

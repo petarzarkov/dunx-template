@@ -1,56 +1,52 @@
 import { describe, expect, test } from 'bun:test';
-import { getTestContext } from '../setup/context';
+import { getTestContext } from '../setup/context.js';
 
-describe('Health Endpoints (e2e)', () => {
-  const ctx = getTestContext();
-
-  describe('GET /api/service/health', () => {
-    test('should return 200 OK with healthy status', async () => {
-      const response = await ctx.api.get<{
-        status: string;
-        info: Record<string, { status: string }>;
-      }>('/api/service/health');
-
-      expect(response.status).toBe(200);
-      expect(response.data.status).toBe('ok');
-      expect(response.data.info).toHaveProperty('db');
-      expect(response.data.info.db.status).toBe('up');
-    });
+describe('service endpoints against a live server', () => {
+  test('liveness', async () => {
+    const { api } = getTestContext();
+    const { status, body } = await api.json<{ uptimeSeconds: number }>(
+      'service/up',
+    );
+    expect(status).toBe(200);
+    expect(body.uptimeSeconds).toBeGreaterThan(0);
   });
 
-  describe('GET /api/service/up', () => {
-    test('throttling', async () => {
-      ctx.api.clearAuthToken();
-      const promises = Array.from({ length: 30 }, async () => {
-        return ctx.api.get<{ uptimeSeconds: number }>('/api/service/up');
-      });
-
-      const responses = await Promise.all(promises);
-
-      expect(responses.length).toBe(30);
-
-      // Count successful (200) and throttled (429) responses
-      const successResponses = responses.filter(r => r.status === 200);
-      const throttledResponses = responses.filter(r => r.status === 429);
-
-      // At least one should be throttled (429) since we exceeded
-      expect(throttledResponses.length).toBeGreaterThanOrEqual(1);
-      expect(successResponses.length).toBeGreaterThanOrEqual(1);
-    });
+  test('readiness reports the real SQLite file up', async () => {
+    const { api } = getTestContext();
+    const { status, body } = await api.json<{
+      status: string;
+      info: Record<string, { status: string }>;
+    }>('service/health');
+    expect(status).toBe(200);
+    expect(body.status).toBe('ok');
+    expect(body.info['db']?.status).toBe('up');
   });
 
-  describe('GET /api/service/config', () => {
-    test('should return 200 OK with config information', async () => {
-      const response = await ctx.api.get<{
-        name: string;
-        version: string;
-        env: string;
-      }>('/api/service/config');
+  test('a logged response carries a request id', async () => {
+    const { api } = getTestContext();
+    const { headers } = await api.json('service/config');
+    expect(headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+  });
 
-      expect(response.status).toBe(200);
-      expect(response.data).toHaveProperty('name');
-      expect(response.data).toHaveProperty('version');
-      expect(response.data).toHaveProperty('env');
+  test('an inbound request id is echoed back', async () => {
+    const { api } = getTestContext();
+    const mine = crypto.randomUUID();
+    const response = await api.raw('service/config', {
+      headers: { 'x-request-id': mine },
     });
+    expect(response.headers.get('x-request-id')).toBe(mine);
+  });
+
+  /**
+   * Pins a coupling that is easy to trip over. `x-request-id` is emitted by
+   * `RequestLoggingMiddleware`, so a path listed in `requestLogging.ignore`
+   * loses correlation as well as its log line - and so does everything the
+   * handler logs, because the `AsyncLocalStorage` scope is never opened.
+   * `/service/up` and `/service/health` are both ignored here.
+   */
+  test('KNOWN GAP: an ignored path gets no request id', async () => {
+    const { api } = getTestContext();
+    const { headers } = await api.json('service/up');
+    expect(headers.get('x-request-id')).toBeNull();
   });
 });

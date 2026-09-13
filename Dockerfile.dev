@@ -1,24 +1,20 @@
 FROM oven/bun:1.3.14-slim
-
-ENV NODE_ENV=development
-ENV APP_ENV=dev
-
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    poppler-utils \
-    curl \
-    ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=development \
+    APP_ENV=dev \
+    API_PORT=3001 \
+    SQLITE_DB_PATH=/app/data/app.db
 
 COPY package.json bun.lock ./
-
-RUN bun install
+RUN bun install --frozen-lockfile
 
 COPY . .
+RUN mkdir -p /app/data
 
-# Entrypoint script
-ENTRYPOINT ["./docker-entrypoint.sh"]
-
+EXPOSE 3001
 CMD ["bun", "run", "dev"]

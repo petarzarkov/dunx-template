@@ -1,39 +1,44 @@
-import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, type SQL } from 'drizzle-orm';
-import { PageDto } from '@/core/pagination/dto/page.dto';
-import { PaginationFactory } from '@/core/pagination/pagination.factory';
-import { DRIZZLE_DB, type DrizzleDB } from '@/infra/db/database.module';
-import { AuditLogQueryDto } from '../dto/audit-log-query.dto';
-import { AuditLog } from '../entity/audit-log.entity';
-import { auditLog } from '../schema/audit-log.schema';
+import { SyncDatabase } from '@dunx/infra/db';
+import { paginate, type Page, type PageOptions } from '@dunx/infra/pagination';
+import * as schema from '../../infra/db/schema.js';
+import {
+  auditLog,
+  type AuditAction,
+  type AuditLogRow,
+} from '../schema/audit-log.schema.js';
 
-@Injectable()
+export interface AuditFilters extends PageOptions {
+  readonly actorId?: string | undefined;
+  readonly action?: AuditAction | undefined;
+  readonly entityName?: string | undefined;
+  readonly entityId?: string | undefined;
+}
+
 export class AuditLogRepository {
-  constructor(
-    @Inject(DRIZZLE_DB) private readonly db: DrizzleDB,
-    private readonly paginationFactory: PaginationFactory,
-  ) {}
+  constructor(private readonly db: SyncDatabase<typeof schema>) {}
 
-  findPaginated(queryDto: AuditLogQueryDto): PageDto<AuditLog> {
-    const filters: SQL[] = [];
-    if (queryDto.actorId) {
-      filters.push(eq(auditLog.actorId, queryDto.actorId));
+  list(filters: AuditFilters): Page<AuditLogRow> {
+    const clauses: SQL[] = [];
+    if (filters.actorId !== undefined) {
+      clauses.push(eq(auditLog.actorId, filters.actorId));
     }
-    if (queryDto.action) {
-      filters.push(eq(auditLog.action, queryDto.action));
+    if (filters.action !== undefined) {
+      clauses.push(eq(auditLog.action, filters.action));
     }
-    if (queryDto.entityName) {
-      filters.push(eq(auditLog.entityName, queryDto.entityName));
+    if (filters.entityName !== undefined) {
+      clauses.push(eq(auditLog.entityName, filters.entityName));
     }
-    if (queryDto.entityId) {
-      filters.push(eq(auditLog.entityId, queryDto.entityId));
+    if (filters.entityId !== undefined) {
+      clauses.push(eq(auditLog.entityId, filters.entityId));
     }
 
-    return this.paginationFactory.paginate<AuditLog>({
+    return paginate<typeof auditLog, AuditLogRow>({
       db: this.db,
       table: auditLog,
-      pageOptions: queryDto,
-      where: filters.length ? and(...filters) : undefined,
+      options: filters,
+      orderBy: 'createdAt',
+      where: clauses.length === 0 ? undefined : and(...clauses),
     });
   }
 }

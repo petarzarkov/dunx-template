@@ -1,63 +1,21 @@
-import { PaginationOrder } from '@/core/pagination/enum/pagination-order.enum';
+/**
+ * Route segments are constants, not environment variables. A decorator argument
+ * is evaluated at class-definition time, long before the container or the
+ * validated config exists, so `@Controller(config.get(...))` is not expressible.
+ * The NestJS template carried `SERVICE_ROUTE`/`HEALTH_ROUTE`/... as env vars and
+ * then hardcoded the same strings in the decorators anyway; this makes the one
+ * source of truth explicit instead.
+ */
+export const SERVICE_ROUTES = Object.freeze({
+  BASE: 'service',
+  HEALTH: 'health',
+  LIVENESS: 'up',
+  CONFIG: 'config',
+} as const);
 
-export const REQUEST_ID_HEADER_KEY = 'X-Request-Id';
-
-export const BASE_USER_TEST_PASS = 'Test123$';
-
-export const GLOBAL_PREFIX = 'api';
-export const DOCS_AFFIX = 'docs';
-
-export const LOGGER = {
-  defaultMaskFields: [
-    'accessToken',
-    'jwt',
-    'password',
-    'secret',
-    'key',
-    'phone',
-  ],
-  defaultFilterEvents: [
-    `/${GLOBAL_PREFIX}/service/up`,
-    `/${GLOBAL_PREFIX}/service/health`,
-    // Bull Board queue dashboard — internal, not worth logging.
-    `/${GLOBAL_PREFIX}/queues`,
-    '/favicon.ico',
-  ],
-} as const;
-
-// Time constants (** in milliseconds **)
-export const MILLISECOND = 1 as const;
-export const SECOND = 1000 * MILLISECOND;
-export const MINUTE = 60 * SECOND;
-export const HOUR = 60 * MINUTE;
-export const DAY = 24 * HOUR;
-
-export const FILES = {
-  MIN_SIZE: 1024, // 1KB
-  MAX_SIZE: 10 * 1024 * 1024, // 10MB
-  MIN_FILE_NAME_LENGTH: 6,
-  MAX_FILES: 6,
-} as const;
-
-export const PAGINATION = Object.freeze({
-  ORDER_BY_PRECEDENCE: Object.freeze(['updatedAt', 'createdAt', 'id']),
-  DEFAULT_ORDER: PaginationOrder.DESC,
-  MIN_TAKE: 1,
-  DEFAULT_TAKE: 10,
-  MAX_TAKE: 50,
-  MAX_SEARCH: 256,
-  MAX_CURSOR: 512,
-});
-
-export const STRING_LENGTH = {
-  EMAIL_MAX: 254, // RFC 5321
-  SHORT_MAX: 128, // tokens, IDs, codes
-  MEDIUM_MAX: 255, // names, entity names
-  PATH_MAX: 1024, // S3 paths, URLs
-  TEXT_MAX: 10_000, // AI prompts, long-form text
-  EXTENSION_MAX: 32, // file extensions
-  MIMETYPE_MAX: 128, // MIME types
-  MODEL_NAME_MAX: 256, // AI model identifiers
-} as const;
-
-export const JOB_HANDLER_METADATA = 'JOB_HANDLER_METADATA';
+/**
+ * Where `@dunx/auth`'s handler is mounted, relative to the global prefix, and the
+ * websocket upgrade path. Both are route paths, so both are decided at
+ * class-definition time and neither can come from the environment.
+ */
+export const WS_PATH = '/ws';

@@ -1,57 +1,38 @@
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { createDrizzleClient, type DrizzleDB } from '@/infra/db/client';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { runSeeds, SyncSqliteOptions } from '@dunx/infra/db';
+import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
+import { MIGRATIONS_FOLDER } from '../src/infra/db/database.module.js';
+import * as schema from '../src/infra/db/schema.js';
+import { applyAuditTriggers } from '../src/infra/db/triggers.js';
 
-/**
- * Migration-style seeder runner. Applies each `*.seeder.ts` in
- * `src/infra/db/seeders/` exactly once, in filename order, tracked in the
- * `__seeders` table.
- */
-const SEEDERS_DIR = join(
-  import.meta.dir,
-  '..',
-  'src',
-  'infra',
-  'db',
-  'seeders',
+const filename = Bun.env['SQLITE_DB_PATH'] ?? './data/app.db';
+if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
+
+const connection = new SyncSqliteOptions({
+  schema,
+  filename,
+  pragmas: ['journal_mode = WAL', 'foreign_keys = ON'],
+}).openSync();
+
+migrate(connection.db, { migrationsFolder: MIGRATIONS_FOLDER });
+applyAuditTriggers(connection.raw);
+
+const report = await runSeeds(connection.db, {
+  dir: join(import.meta.dir, '..', 'src', 'infra', 'db', 'seeds'),
+  env: Bun.env['NODE_ENV'] ?? 'development',
+});
+
+connection.closeSync();
+
+console.log(
+  JSON.stringify(
+    {
+      applied: report.applied,
+      journaled: report.journaled,
+      skipped: report.skipped,
+    },
+    null,
+    2,
+  ),
 );
-const sqlitePath = process.env.SQLITE_DB_PATH ?? './data/app.db';
-
-async function run() {
-  const { db, sqlite } = createDrizzleClient(sqlitePath);
-  try {
-    sqlite.exec(
-      `CREATE TABLE IF NOT EXISTS __seeders (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`,
-    );
-    const applied = new Set(
-      (
-        sqlite.query('SELECT name FROM __seeders').all() as { name: string }[]
-      ).map(r => r.name),
-    );
-
-    const files = readdirSync(SEEDERS_DIR)
-      .filter(f => f.endsWith('.seeder.ts'))
-      .sort();
-
-    let count = 0;
-    for (const file of files) {
-      if (applied.has(file)) {
-        continue;
-      }
-      const mod = (await import(join(SEEDERS_DIR, file))) as {
-        seed: (db: DrizzleDB) => Promise<void> | void;
-      };
-      await mod.seed(db);
-      sqlite
-        .query('INSERT INTO __seeders (name, applied_at) VALUES (?, ?)')
-        .run(file, Date.now());
-      console.log(`✅ seeded ${file}`);
-      count++;
-    }
-    console.log(count ? `Applied ${count} seeder(s).` : 'No new seeders.');
-  } finally {
-    sqlite.close();
-  }
-}
-
-await run();

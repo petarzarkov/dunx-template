@@ -1,64 +1,67 @@
 import { z } from 'zod';
-import { MINUTE, SECOND } from '@/constants';
 
 /**
- * Redis connection + BullMQ queue tuning + REST cache TTL. Consumed as the
- * `redis` config group. BullMQ, the Socket.io Redis adapter, the throttler
- * storage and the cache-manager store all build their own ioredis connections
- * from `host`/`port`/`password`/`db`.
+ * Redis is optional everywhere it appears. Absent, the cache reports itself
+ * degraded, the throttler stops throttling, the queue answers 503 and the
+ * websocket relay fans out locally - the app still boots and still exits 0.
+ *
+ * That is why there is no `REDIS_HOST`/`REDIS_PORT`/`REDIS_DB` triple as in the
+ * NestJS template: `Bun.RedisClient` takes a URL, and one absent URL is a much
+ * clearer "there is no Redis" than four fields with working defaults.
  */
 export const redisVarsSchema = z.object({
-  REDIS_HOST: z.string().default('localhost'),
-  REDIS_PORT: z.coerce.number().min(0).max(65535).default(6379),
-  REDIS_PASSWORD: z.string().optional(),
-  REDIS_DB: z.coerce.number().min(0).max(15).default(0),
+  REDIS_URL: z.string().optional(),
 
-  REDIS_CACHE_TTL: z.coerce
+  /**
+   * How long a connect attempt waits before failing. Deliberately short: a
+   * degraded route has to answer, and answering slowly is worse than answering
+   * 503.
+   */
+  REDIS_CONNECT_TIMEOUT_MS: z.coerce
     .number()
-    .min(SECOND)
-    .max(MINUTE)
-    .default(5 * SECOND),
+    .int()
+    .min(50)
+    .max(30_000)
+    .default(500),
 
-  REDIS_QUEUES_MAX_RETRIES: z.coerce.number().min(1).max(10).default(3),
-  REDIS_QUEUES_RETRY_DELAY_MS: z.coerce
+  CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
+
+  /**
+   * Namespaces every counter key. Two deployments sharing one Redis need two
+   * values, or one would spend the other's budget - and a test run needs its own,
+   * or it inherits the last run's counters.
+   */
+  THROTTLE_PREFIX: z.string().default('dunx-template'),
+  THROTTLE_LIMIT: z.coerce.number().int().min(1).max(10_000).default(20),
+  THROTTLE_WINDOW_SECONDS: z.coerce.number().int().min(1).max(3600).default(60),
+
+  QUEUE_PREFIX: z.string().default('dunx-template'),
+  QUEUE_MAX_RETRIES: z.coerce.number().int().min(1).max(10).default(3),
+  QUEUE_RETRY_DELAY_MS: z.coerce
     .number()
+    .int()
     .min(100)
     .max(60_000)
-    .default(5 * SECOND),
-  REDIS_QUEUES_CONCURRENCY: z.coerce.number().min(1).max(100).default(3),
-  REDIS_QUEUES_RATE_LIMIT_MAX: z.coerce.number().min(1).max(1000).default(100),
-  REDIS_QUEUES_RATE_LIMIT_DURATION: z.coerce
+    .default(5000),
+  QUEUE_CONCURRENCY: z.coerce.number().int().min(1).max(100).default(3),
+  QUEUE_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1000).default(100),
+  QUEUE_RATE_LIMIT_DURATION_MS: z.coerce
     .number()
+    .int()
     .min(100)
     .max(60_000)
-    .default(SECOND),
-  REDIS_QUEUES_JOB_TIMEOUT_MS: z.coerce
+    .default(1000),
+  QUEUE_JOB_TIMEOUT_MS: z.coerce
     .number()
-    .min(10 * SECOND)
-    .max(10 * MINUTE)
-    .default(2 * MINUTE),
+    .int()
+    .min(1000)
+    .max(600_000)
+    .default(120_000),
+
+  /**
+   * The one broker channel every websocket topic is relayed on. Two deployments
+   * sharing a Redis need two different values, or each would fan out the other's
+   * frames.
+   */
+  WS_RELAY_CHANNEL: z.string().default('dunx-template:ws'),
 });
-
-export type RedisVars = z.infer<typeof redisVarsSchema>;
-
-export const getRedisConfig = (config: RedisVars) => {
-  return {
-    redis: {
-      host: config.REDIS_HOST,
-      port: config.REDIS_PORT,
-      password: config.REDIS_PASSWORD,
-      db: config.REDIS_DB,
-      cache: { ttl: config.REDIS_CACHE_TTL },
-      queues: {
-        jobTimeoutMs: config.REDIS_QUEUES_JOB_TIMEOUT_MS,
-        maxRetries: config.REDIS_QUEUES_MAX_RETRIES,
-        retryDelayMs: config.REDIS_QUEUES_RETRY_DELAY_MS,
-        concurrency: config.REDIS_QUEUES_CONCURRENCY,
-        rateLimitMax: config.REDIS_QUEUES_RATE_LIMIT_MAX,
-        rateLimitDuration: config.REDIS_QUEUES_RATE_LIMIT_DURATION,
-      },
-    },
-  };
-};
-
-export type ValidatedRedisConfig = ReturnType<typeof getRedisConfig>;
