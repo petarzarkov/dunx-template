@@ -12,8 +12,8 @@ import { JobPublisher } from '@dunx/infra/queue';
 import { AppConfigService } from '../../config/app.config.service.js';
 import { QUEUES } from '../../notifications/events/events.js';
 import { CacheStoreModule } from '../cache/cache.module.js';
-import { DegradingCacheStore } from '../cache/degrading-store.js';
 import { BuildInfoController } from './build-info.controller.js';
+import { DegradingCacheStore } from '@dunx/infra/cache';
 import {
   CacheIndicator,
   DegradableAmqpIndicator,

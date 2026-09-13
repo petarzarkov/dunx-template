@@ -33,8 +33,16 @@ const source = {
   QUEUE_PREFIX: `test-${crypto.randomUUID()}`,
   THROTTLE_PREFIX: `test-${crypto.randomUUID()}`,
   THROTTLE_LIMIT: '10000',
-  // Outside `local` the drain is 5s, and a suite closing a server per file
-  // pays it. See petarzarkov/dunx#146.
+  /**
+   * 3.9.1 has `@dunx/testing` zero the shutdown drain, which is why the other
+   * suites no longer set this. It cannot reach here: this suite builds through
+   * `HttpFactory.create` rather than `createTestServer`, because the gate
+   * belongs to `OpenApiModule` and that module has to wrap the root. So the
+   * harness never sees the app and never gets to override anything.
+   *
+   * Without it the drain is 5s outside `local`, which is over Bun's default
+   * hook timeout and surfaces as an `(unnamed)` failure naming no line.
+   */
   HEALTH_DRAIN_MS: '0',
   SEED_ADMIN_EMAIL: 'admin@local.dev',
   SEED_ADMIN_PASSWORD: 'admin-password',

@@ -10,7 +10,7 @@ import { AccountsModule } from '../../auth/auth.module.js';
 import { CurrentUser } from '../../auth/services/current-user.service.js';
 import { AppConfigService } from '../../config/app.config.service.js';
 import { CacheStoreModule } from '../cache/cache.module.js';
-import { DegradingCacheStore } from '../cache/degrading-store.js';
+import { DegradingCacheStore } from '@dunx/infra/cache';
 
 /**
  * The rate limiter.
@@ -49,7 +49,7 @@ export class AppThrottleModule {
         logger: Logger,
       ) => {
         const { prefix, limit, windowSeconds } = config.get('throttle');
-        const { reachable } = await probe.probe();
+        const reachable = await probe.probe();
 
         logger.info(
           reachable

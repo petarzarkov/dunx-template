@@ -138,6 +138,13 @@ carry a payload somewhere:
 A subscriber that must survive a restart wants the queue. One in another service
 wants the exchange. One that only needs to react wants the bus.
 
+## The health report carries data, not just prose
+
+`ProbeResult` has `detail` for the one line an operator reads and `data` for the
+values anything else reads. A new indicator should fill both: a scrape or an
+alert rule cannot parse a sentence, and `QueueIndicator` is the example - per
+queue counts as numbers, and the same counts flattened into `detail`.
+
 ## SQLite is multi-writer here
 
 A web server, a worker, and a forked child per `@JobHandler({ background: true })`

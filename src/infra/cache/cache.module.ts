@@ -4,13 +4,13 @@ import {
   CacheMetrics,
   CacheModule,
   CacheOptions,
+  DegradingCacheStore,
   MemoryCacheStore,
   RedisCacheStore,
   TieredCacheStore,
 } from '@dunx/infra/cache';
 import { RedisConnection } from '@dunx/infra/redis';
 import { AppConfigService } from '../../config/app.config.service.js';
-import { DegradingCacheStore } from './degrading-store.js';
 
 /**
  * The L2 store on its own, so two things can reach it: `CacheModule`'s factory,
@@ -25,7 +25,7 @@ import { DegradingCacheStore } from './degrading-store.js';
   providers: [
     provide(DegradingCacheStore, {
       useFactory: (redis: RedisConnection, logger: Logger) =>
-        new DegradingCacheStore(new RedisCacheStore(redis), logger),
+        new DegradingCacheStore(new RedisCacheStore(redis), { logger }),
       inject: [RedisConnection, Logger],
     }),
   ],
@@ -36,11 +36,12 @@ export class CacheStoreModule {}
 /**
  * The value cache: an in-process L1 in front of Redis.
  *
- * The app used to own a `CacheService` over `RedisConnection`. What that class
- * had that the framework's `Cache` does not is degradation, and that is the
- * whole of what stayed: `DegradingCacheStore` sits at the **store** seam, so
- * `Cache`, `wrap`'s single-flight, the tier and the metrics are all the
- * framework's.
+ * `DegradingCacheStore` is `@dunx/infra/cache`'s own as of 3.9.1 - this app
+ * wrote it first, raised it as dunx#147, and deleted its copy when the framework
+ * shipped one. It wraps the **L2 only**, by hand rather than through
+ * `CacheModule`'s `degrade: true`, because `TieredCacheStore.set` awaits L2
+ * before L1 and degrading from outside the tier would lose the L1 promotion
+ * with it.
  *
  * **L1 is not only a speed-up here, it is what makes degradation useful.** With
  * Redis gone the tier still answers from memory for this process, so a hot key

@@ -5,8 +5,8 @@ import {
   type ProbeResult,
 } from '@dunx/http';
 import { JobPublisher } from '@dunx/infra/queue';
-import { DegradingCacheStore } from '../cache/degrading-store.js';
 import type { QueueName } from '../../notifications/events/events.js';
+import { DegradingCacheStore } from '@dunx/infra/cache';
 
 /**
  * The queue, which the framework ships no indicator for because it ships no
@@ -33,15 +33,32 @@ export class QueueIndicator extends HealthIndicator {
 
   async check(): Promise<ProbeResult> {
     try {
-      const counts = await Promise.all(
+      const counted = await Promise.all(
         this.queues.map(async (queue) => {
           const { waiting, active, failed } = await this.publisher
             .queue(queue)
             .getJobCounts();
-          return `${queue} ${waiting ?? 0}w/${active ?? 0}a/${failed ?? 0}f`;
+          return [
+            queue,
+            { waiting: waiting ?? 0, active: active ?? 0, failed: failed ?? 0 },
+          ] as const;
         }),
       );
-      return { state: 'up', detail: counts.join(', ') };
+
+      /**
+       * `data` alongside `detail`, which is what 3.9.1 added for exactly this.
+       * The counts used to be flattened into "notifications 12w/0a/0f" - one
+       * line an operator can read and nothing else can, so an alert rule or a
+       * scrape had to parse a format nothing promised to keep. Now `detail` is
+       * still that sentence and `data` carries the numbers.
+       */
+      return {
+        state: 'up',
+        detail: counted
+          .map(([q, c]) => `${q} ${c.waiting}w/${c.active}a/${c.failed}f`)
+          .join(', '),
+        data: Object.fromEntries(counted),
+      };
     } catch (error) {
       return {
         state: 'down',
@@ -70,10 +87,10 @@ export class CacheIndicator extends HealthIndicator {
   }
 
   async check(): Promise<ProbeResult> {
-    const { reachable, note } = await this.store.probe();
+    const reachable = await this.store.probe();
     return reachable
       ? { state: 'up' }
-      : { state: 'down', detail: note ?? 'unreachable' };
+      : { state: 'down', detail: 'unreachable' };
   }
 }
 
