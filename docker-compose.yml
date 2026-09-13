@@ -80,5 +80,30 @@ services:
       echo 'bucket ready'
       "
 
+  # A real inbox, locally, behind a profile so a plain `up` stays Redis on its own:
+  #
+  #   docker compose --profile mail up -d
+  #
+  # Then set EMAIL_TRANSPORT=smtp and EMAIL_SMTP_URL=smtp://localhost:1025, and
+  # every message the worker sends lands at http://localhost:8025 instead of a log
+  # line. Mailpit accepts any credentials and delivers nothing onward, which is
+  # what makes it safe to point a template at.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: dunx-template-mailpit
+    restart: unless-stopped
+    profiles: ['mail']
+    ports:
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+      - '${MAILPIT_UI_PORT:-8025}:8025'
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '-', 'http://localhost:8025/readyz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   minio-data:

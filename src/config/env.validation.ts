@@ -95,9 +95,13 @@ export const validateConfig = (env: ConfigSource) => {
     },
     ws: { relayChannel: vars.WS_RELAY_CHANNEL },
     email: {
-      webhookUrl: vars.EMAIL_WEBHOOK_URL,
-      timeoutMs: vars.EMAIL_TIMEOUT_MS,
-      maxRetries: vars.EMAIL_MAX_RETRIES,
+      transport: vars.EMAIL_TRANSPORT,
+      from: vars.EMAIL_FROM,
+      replyTo: vars.EMAIL_REPLY_TO,
+      smtpUrl: vars.EMAIL_SMTP_URL,
+      resendKey: vars.EMAIL_RESEND_KEY,
+      maxPerSecond: vars.EMAIL_MAX_PER_SECOND,
+      dryRun: vars.EMAIL_DRY_RUN,
     },
     storage: {
       driver: vars.STORAGE_DRIVER,
