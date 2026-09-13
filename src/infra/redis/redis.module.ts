@@ -1,7 +1,6 @@
 import type { DynamicModule } from '@dunx/core';
 import { RedisModule } from '@dunx/infra/redis';
 import { AppConfigService } from '../../config/app.config.service.js';
-import { CacheService } from './services/cache.service.js';
 
 /**
  * Registered unconditionally, and that is the whole convention: `Bun.RedisClient`
@@ -42,8 +41,7 @@ export class RedisCacheModule {
       module: RedisCacheModule,
       global: true,
       imports: [redis],
-      providers: [CacheService],
-      exports: [redis, CacheService],
+      exports: [redis],
     };
   }
 }

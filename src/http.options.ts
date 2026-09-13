@@ -1,13 +1,12 @@
 import { SessionGuard } from '@dunx/auth';
 import { DashboardMiddleware } from '@dunx/dashboard';
+import { ThrottleGuard } from '@dunx/http';
 import { RedisRelay, type HttpOptions } from '@dunx/http';
-import { SERVICE_ROUTES } from './constants.js';
+import { HEALTH_ROUTES } from './constants.js';
 import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
-import { DocsSessionMiddleware } from './core/middlewares/docs-session.middleware.js';
 import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
-import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 
 /**
  * The `HttpOptions` in one place, because they have to be passed to
@@ -18,7 +17,7 @@ import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
  * omission is silent.
  */
 export const httpOptions = (config: AppConfig): HttpOptions => {
-  const servicePath = `/${config.app.prefix}/${SERVICE_ROUTES.BASE}`;
+  const prefix = `/${config.app.prefix}`;
   return {
     /**
      * Outermost first, after the built-in request logger. `SessionGuard` leads
@@ -35,12 +34,6 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
        * key, since an unmatched path has no controller or handler to key on.
        */
       DashboardMiddleware,
-      /**
-       * Also ahead of `SessionGuard`, for the same reason: the explorer routes
-       * are `@Public()`, so the guard would wave them through, and the pages
-       * are reached by a browser that has a cookie rather than a bearer token.
-       */
-      DocsSessionMiddleware,
       SessionGuard,
       ThrottleGuard,
       /**
@@ -73,13 +66,19 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
      * The miss is still logged and still gets a request id: the fallback runs the
      * global middleware either way, which is the whole reason it exists.
      */
+    /**
+     * Per-route request counts and timings, folded into the entry the request
+     * logger already builds - about 35 ns. `@dunx/dashboard` renders them, and
+     * without this its stats panel has nothing in it.
+     */
+    metrics: true,
     notFound: 'public',
     requestLogging: {
       requestBody: config.log.requestBody,
       responseBody: config.log.responseBody,
       ignore: [
-        `${servicePath}/${SERVICE_ROUTES.LIVENESS}`,
-        `${servicePath}/${SERVICE_ROUTES.HEALTH}`,
+        `${prefix}/${HEALTH_ROUTES.LIVENESS}`,
+        `${prefix}/${HEALTH_ROUTES.READINESS}`,
       ],
     },
     websocket: { idleTimeout: 60 },

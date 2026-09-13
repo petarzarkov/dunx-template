@@ -35,6 +35,7 @@ import { accounts } from '../src/auth/schema/account.schema.js';
 import { sessions } from '../src/auth/schema/session.schema.js';
 import { verifications } from '../src/auth/schema/verification.schema.js';
 import { passwordSchema } from '../src/core/zod/schemas.js';
+import { SQLITE_PRAGMAS } from '../src/infra/db/pragmas.js';
 
 const ask = (question: string): string => {
   const answer = prompt(question);
@@ -62,7 +63,7 @@ if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
 const connection = new SyncSqliteOptions({
   schema,
   filename,
-  pragmas: ['journal_mode = WAL', 'foreign_keys = ON'],
+  pragmas: SQLITE_PRAGMAS,
 }).openSync();
 
 // The script may be the first thing that ever touches a fresh volume.

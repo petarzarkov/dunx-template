@@ -1,5 +1,11 @@
 {
   "compilerOptions": {
+    /**
+     * React Email templates are `.tsx`. `react-jsx` needs no `React` import and
+     * emits the automatic runtime; module resolution stays `nodenext`, so the
+     * `.js` extension rule is unchanged.
+     */
+    "jsx": "react-jsx",
     "target": "ESNext",
     "lib": ["ESNext"],
     "module": "nodenext",

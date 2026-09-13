@@ -47,8 +47,8 @@ export const serviceVarsSchema = z.object({
     'phone',
   ]),
   LOG_FILTER_EVENTS: csv([
-    '/api/service/up',
-    '/api/service/health',
+    '/api/health/live',
+    '/api/health/ready',
     '/favicon.ico',
   ]),
   LOG_REQUEST_BODY: z.stringbool().default(false),
@@ -56,6 +56,14 @@ export const serviceVarsSchema = z.object({
 
   API_PORT: z.coerce.number().int().min(0).max(65535),
   API_PREFIX: z.string().default('api'),
+
+  /**
+   * How long readiness reports failing before shutdown continues, so a load
+   * balancer has time to stop routing. Unset means `0` locally and 5s
+   * everywhere else: a developer restarting `bun run dev` should not wait, and
+   * neither should a test suite closing a server per file.
+   */
+  HEALTH_DRAIN_MS: z.coerce.number().int().min(0).max(60_000).optional(),
 
   HEALTH_MAX_MEMORY_MB: z.coerce.number().int().min(16).default(2048),
 

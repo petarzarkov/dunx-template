@@ -43,13 +43,16 @@ jobs:
           bun src/main.ts &
           pid=$!
           for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:3001/api/service/up > /dev/null && break
+            curl -fsS http://127.0.0.1:3001/api/health/live > /dev/null && break
             sleep 1
           done
-          # `status` is ok even though the cache and the queue are degraded: an
-          # absent service is reported, never a failed readiness probe.
-          curl -fsS http://127.0.0.1:3001/api/service/health | tee /dev/stderr | grep -q '"status":"ok"'
-          curl -fsS http://127.0.0.1:3001/api/service/health | grep -q '"degraded":{"cache"'
+          # `up` even though the cache and the queue report themselves down: they
+          # are `critical: false`, so an absent service is reported and never
+          # fails the readiness probe.
+          curl -fsS http://127.0.0.1:3001/api/health/ready | tee /dev/stderr | grep -q '"status":"up"'
+          curl -fsS http://127.0.0.1:3001/api/health/ready | grep -q '"name":"cache","state":"down"'
+          # Liveness asks nothing, which is what makes it safe as a restart probe.
+          curl -fsS http://127.0.0.1:3001/api/health/live | grep -q '"checks":\[\]'
           curl -fsS http://127.0.0.1:3001/api/openapi.json > /dev/null
           # Both explorers, and the page StaticFiles serves at the root.
           curl -fsS http://127.0.0.1:3001/api/docs > /dev/null
@@ -115,10 +118,10 @@ jobs:
           bun src/worker.ts &
           worker=$!
           for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:3002/api/service/up > /dev/null && break
+            curl -fsS http://127.0.0.1:3002/api/health/live > /dev/null && break
             sleep 1
           done
-          curl -fsS http://127.0.0.1:3002/api/service/health | tee /dev/stderr | grep -q '"queue":{"status":"up"'
+          curl -fsS http://127.0.0.1:3002/api/health/ready | tee /dev/stderr | grep -q '"name":"queue","state":"up"'
           kill "$app" "$worker"
 
   docker:
@@ -135,10 +138,10 @@ jobs:
             -e BETTER_AUTH_SECRET=ci-secret-that-is-at-least-32-characters \
             dunx-template:ci
           for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:3001/api/service/up > /dev/null && break
+            curl -fsS http://127.0.0.1:3001/api/health/live > /dev/null && break
             sleep 1
           done
-          curl -fsS http://127.0.0.1:3001/api/service/health | grep -q '"status":"ok"'
+          curl -fsS http://127.0.0.1:3001/api/health/ready | grep -q '"status":"up"'
           # public/ has to reach the image, and only a built image can prove it.
           curl -fsS -H 'accept: text/html' http://127.0.0.1:3001/ | grep -q '<title>'
           docker logs dunx-template-ci

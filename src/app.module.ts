@@ -1,5 +1,6 @@
 import type { ConfigSource, DynamicModule, ModuleRef } from '@dunx/core';
 import { StaticModule } from '@dunx/http';
+import { EventBusModule } from '@dunx/core';
 import { LoggerModule } from '@dunx/infra/logger';
 import { ScheduleModule } from '@dunx/infra/schedule';
 import { AccountsModule } from './auth/auth.module.js';
@@ -7,18 +8,19 @@ import { AuditModule } from './audit/audit.module.js';
 import { AppConfigModule } from './config/app.config.module.js';
 import { AppConfigService } from './config/app.config.service.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
-import { DocsSessionMiddleware } from './core/middlewares/docs-session.middleware.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { FilesFeatureModule } from './files/files.module.js';
 import { AppDashboardModule } from './infra/dashboard/dashboard.module.js';
+import { AppCacheModule } from './infra/cache/cache.module.js';
+import { AppThrottleModule } from './infra/throttle/throttle.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
-import { HealthModule } from './infra/health/health.module.js';
+import { AppHealthModule } from './infra/health/health.module.js';
 import { ImagesConfigModule } from './infra/images/images.module.js';
 import { QueuesModule } from './infra/queue/queue.module.js';
 import { RedisCacheModule } from './infra/redis/redis.module.js';
 import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
-import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
+import { AppMessagingModule } from './notifications/messaging/messaging.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -73,8 +75,21 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
         { captureGlobalErrors: true },
       )
     : LoggerModule.forRoot({ level: options.logLevel }),
+  /**
+   * In-process fan-out, bound globally so a subscriber's module does not have to
+   * import the publisher's - which is the whole point of using it.
+   *
+   * A decorated class, not a `forRoot()`: a scope is keyed on the module
+   * reference, so two importers calling a zero-argument factory would build two
+   * buses and a publisher would reach half its subscribers.
+   */
+  EventBusModule,
   DatabaseModule.forRoot(),
   RedisCacheModule.forRoot(),
+  // After Redis: the L2 store is built over that connection.
+  AppCacheModule.forRoot(),
+  // After the cache: it reuses that store's reachability probe to pick a counter.
+  AppThrottleModule.forRoot(),
   StorageModule.forRoot(),
   ImagesConfigModule.forRoot(),
 ];
@@ -135,7 +150,10 @@ export class AppModule {
         // After DatabaseModule, so better-auth reuses the connection it opened.
         AccountsModule,
         NotificationsModule.forRoot({ publisher: 'socket' }),
-        HealthModule,
+        // Announces; does not consume. A web process that started consuming to
+        // send a message would be a surprise.
+        AppMessagingModule.forRoot(),
+        AppHealthModule.forRoot(),
         UsersModule,
         FilesFeatureModule.forRoot(),
         AuditModule,
@@ -162,10 +180,8 @@ export class AppModule {
        */
       providers: [
         AuditContextMiddleware,
-        ThrottleGuard,
         ResponseCacheMiddleware,
         HomeMiddleware,
-        DocsSessionMiddleware,
       ],
     };
   }
@@ -187,6 +203,8 @@ export class WorkerModule {
         ...foundation(options),
         QueuesModule.forRoot({ controllers: false }),
         NotificationsModule.forRoot({ publisher: 'relay' }),
+        // The consuming side lives with the other background work.
+        AppMessagingModule.forRoot({ consume: true }),
         FilesFeatureModule.forRoot({ controllers: false }),
       ],
     };

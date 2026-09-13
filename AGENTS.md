@@ -67,10 +67,17 @@ marker should.
 ## Middleware order
 
 `httpOptions.middleware` runs before anything `app.use` appends, and the order in
-that array is the order they run. Two entries are ahead of `SessionGuard` on
-purpose: `DashboardMiddleware` and `DocsSessionMiddleware` both do their own
-authorization against better-auth, and behind the guard the dashboard's polling
-would also be counted by `ThrottleGuard` against a single key.
+that array is the order they run. `DashboardMiddleware` is ahead of
+`SessionGuard` on purpose: it does its own authorization against better-auth, and
+behind the guard its polling would also be counted by `ThrottleGuard` against a
+single key. `ThrottleGuard` is `@dunx/http`'s now, and it skips unmatched paths
+unless a route claims them.
+
+The documentation is not gated by a middleware at all. `OpenApiModule` and
+`DashboardModule` each take an `Authorize`, and `ReferenceMiddleware` runs the
+same function through `gate()` for the Scalar page this app mounts itself. An
+`Authorize` returning a `Response` refuses with it, which is how a browser gets a
+login form where an API client would get a 404.
 
 `notFound: 'public'` is set, so an unmatched path is a 404 rather than the
 guard's 401. Middleware appended by `app.use` relies on that.
@@ -113,3 +120,28 @@ comes from `AuditContextMiddleware`. If you add an audited table, add it to
 - Do not use an em dash or en dash anywhere, including commit messages.
 - Do not add a `Co-Authored-By` or any attribution trailer to a commit.
 - Do not hand-edit `docs/env-vars.md` or `openapi.json`; both are generated.
+
+## Three messaging shapes, and which is which
+
+Getting these confused is the easiest mistake to make here, because all three
+carry a payload somewhere:
+
+- **A bullmq job** is work this system owes and must finish. Durable, retried,
+  exactly one consumer. `JobPublisher.publish`, and a failure to enqueue is told
+  to the caller.
+- **An AMQP domain event** is a fact other services subscribe to. Zero or many
+  consumers, and this app is not responsible for what they do with it.
+  `DomainPublisher.announce`, which never throws.
+- **An `AppEvent`** crosses nothing. It is how one part of this process tells
+  another that something happened, without naming who listens. `EventBus.emit`.
+
+A subscriber that must survive a restart wants the queue. One in another service
+wants the exchange. One that only needs to react wants the bus.
+
+## SQLite is multi-writer here
+
+A web server, a worker, and a forked child per `@JobHandler({ background: true })`
+job all write one file. `SQLITE_PRAGMAS` sets `busy_timeout` for exactly that
+reason - WAL lets many readers run beside one writer, but a second writer gets
+`SQLITE_BUSY` back immediately rather than waiting. Open every connection with
+that constant.

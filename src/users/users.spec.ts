@@ -72,30 +72,39 @@ afterAll(async () => {
 
 describe('GET /api/service/*', () => {
   test('liveness needs no credential', async () => {
-    const { status, body } = await server.json<{ uptimeSeconds: number }>(
-      'api/service/up',
-    );
+    // The framework's envelope: monotonic milliseconds, and `checks` empty
+    // because liveness asks nothing - a process that answers is alive.
+    const { status, body } = await server.json<{
+      status: string;
+      uptimeMs: number;
+      checks: unknown[];
+    }>('api/health/live');
     expect(status).toBe(200);
-    expect(body.uptimeSeconds).toBeGreaterThan(0);
+    expect(body.status).toBe('up');
+    expect(body.uptimeMs).toBeGreaterThan(0);
+    expect(body.checks).toEqual([]);
   });
 
   test('readiness reports the database up and never fails on a missing service', async () => {
     const { status, body } = await server.json<{
       status: string;
-      info: Record<string, { status: string }>;
-      degraded: Record<string, { status: string }>;
-    }>('api/service/health');
+      checks: { name: string; state: string; critical: boolean }[];
+    }>('api/health/ready');
+
+    const named = (name: string) => body.checks.find((c) => c.name === name);
 
     expect(status).toBe(200);
-    expect(body.status).toBe('ok');
-    expect(body.info['db']?.status).toBe('up');
-    expect(body.info['storage']?.status).toBe('up');
-    expect(body.info['images']?.status).toBe('up');
-    // Redis may or may not be running. Either way the probe passes: a degraded
-    // area is reported, not failed.
-    expect(
-      body.info['cache']?.status ?? body.degraded['cache']?.status,
-    ).toBeDefined();
+    expect(body.status).toBe('up');
+    expect(named('database')?.state).toBe('up');
+    expect(named('storage')?.state).toBe('up');
+
+    /**
+     * Redis may or may not be running, and either way readiness passes. That is
+     * `critical: false` doing the work the old `degraded` bucket did: the check
+     * is reported, and it does not gate the probe.
+     */
+    expect(named('cache')).toBeDefined();
+    expect(named('cache')?.critical).toBe(false);
   });
 
   test('config reports the build', async () => {
@@ -426,7 +435,7 @@ describe('routing', () => {
   });
 
   test('an unmatched method on a matched path is a 404, not a 405', async () => {
-    const response = await server.request('api/service/up', {
+    const response = await server.request('api/health/live', {
       method: 'PUT',
       headers: asAdmin(),
     });

@@ -12,6 +12,7 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { MIGRATIONS_FOLDER } from '../src/infra/db/database.module.js';
 import * as schema from '../src/infra/db/schema.js';
 import { applyAuditTriggers } from '../src/infra/db/triggers.js';
+import { SQLITE_PRAGMAS } from '../src/infra/db/pragmas.js';
 
 const filename = Bun.env['SQLITE_DB_PATH'] ?? './data/app.db';
 if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
@@ -21,7 +22,7 @@ if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
 const connection = new SyncSqliteOptions({
   schema,
   filename,
-  pragmas: ['journal_mode = WAL', 'foreign_keys = ON'],
+  pragmas: SQLITE_PRAGMAS,
 }).openSync();
 
 migrate(connection.db, { migrationsFolder: MIGRATIONS_FOLDER });

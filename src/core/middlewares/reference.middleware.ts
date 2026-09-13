@@ -1,13 +1,17 @@
 import type { BunRequest } from 'bun';
 import {
+  gate,
+  type Authorize,
   type Middleware,
   type Next,
   type RouteContext,
   UNMATCHED,
 } from '@dunx/http';
+import { Auth } from '@dunx/auth';
 import { OpenApiExplorer } from '@dunx/openapi';
 import { ScalarRenderer } from '@dunx/openapi/scalar';
 import { AppConfigService } from '../../config/app.config.service.js';
+import { docsAuthorize } from '../../auth/docs-authorize.js';
 
 /**
  * Scalar, beside Swagger.
@@ -30,17 +34,26 @@ export class ReferenceMiddleware implements Middleware {
   readonly #mount: string;
   readonly #prefix: string;
   readonly #jsonHref: string;
+  readonly #authorize: Authorize | undefined;
   #page: Promise<string> | undefined;
 
   constructor(
     private readonly explorer: OpenApiExplorer,
     config: AppConfigService,
+    auth: Auth,
   ) {
-    const { prefix } = config.get('app');
+    const { prefix, env } = config.get('app');
     const docs = config.get('docs');
     this.#prefix = `/${prefix}`;
     this.#mount = `/${prefix}/${docs.scalarPath}`;
     this.#jsonHref = `/${prefix}/${docs.jsonPath}`;
+    /**
+     * The same decision `OpenApiModule` was given. `OpenApiModule`'s own
+     * `authorize` covers its page, its document and its assets; this page is
+     * mounted by this app, so it has to ask - and asking the same function is
+     * what keeps the two from drifting apart.
+     */
+    this.#authorize = docsAuthorize(auth, env, prefix);
   }
 
   async handle(
@@ -51,13 +64,26 @@ export class ReferenceMiddleware implements Middleware {
     if (ctx.get(UNMATCHED) !== true || req.method !== 'GET') return next();
 
     const { pathname } = new URL(req.url);
+    const mine =
+      pathname === this.#mount || pathname.startsWith(`${this.#mount}/`);
+    if (!mine) return next();
+
+    /**
+     * `gate()` is `@dunx/http`'s own runner: `undefined` carries on, a
+     * `Response` is the refusal. Only `true` admits, so an `authorize` that
+     * falls off the end of a branch closes rather than opens.
+     *
+     * Ahead of the asset branch as well as the page, because a page that is
+     * gated while its script is not is not gated.
+     */
+    const refused = await gate(this.#authorize, req);
+    if (refused !== undefined) return refused;
+
     if (pathname === this.#mount) {
       return new Response(await this.#html(), {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
     }
-    if (!pathname.startsWith(`${this.#mount}/`)) return next();
-
     return this.#renderer.asset(pathname.slice(this.#mount.length + 1));
   }
 

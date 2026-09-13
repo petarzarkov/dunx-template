@@ -1,9 +1,12 @@
 import { Logger } from '@dunx/core';
-import { HttpFactory, StaticFiles } from '@dunx/http';
+import { Compression, HttpFactory, StaticFiles } from '@dunx/http';
 import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
 import { SwaggerRenderer } from '@dunx/openapi/swagger';
 import { AppModule } from './app.module.js';
 import { authDocument } from './auth/auth.document.js';
+import { Auth } from '@dunx/auth';
+import { AccountsModule } from './auth/auth.module.js';
+import { docsAuthorize } from './auth/docs-authorize.js';
 import { AUTH_MOUNT, authBasePath } from './auth/auth.options.js';
 import { AppConfigService } from './config/app.config.service.js';
 import { validateConfig } from './config/env.validation.js';
@@ -11,7 +14,7 @@ import { httpOptions } from './http.options.js';
 import { forceExitAfter } from './core/force-exit.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { ReferenceMiddleware } from './core/middlewares/reference.middleware.js';
-import { SERVICE_ROUTES } from './constants.js';
+import { HEALTH_ROUTES } from './constants.js';
 
 /**
  * The config is validated here as well as inside `ConfigModule`, because
@@ -69,8 +72,15 @@ const app = await HttpFactory.create(
         return response;
       }`,
     }),
-    useFactory: (config: AppConfigService) => {
+    /**
+     * `AccountsModule` for `Auth`. A dynamic module is its own scope, so the
+     * factory sees only what this module imports, and `Auth` is the one
+     * dependency here that is not global.
+     */
+    imports: [AccountsModule],
+    useFactory: (config: AppConfigService, auth: Auth) => {
       const { app: meta, docs } = config.values;
+      const authorize = docsAuthorize(auth, meta.env, meta.prefix);
       return {
         title: meta.name,
         version: meta.version,
@@ -86,9 +96,18 @@ const app = await HttpFactory.create(
         // `scripts`/openapi.config.ts shares this function and runs with no
         // container at all. One contribution, two entrypoints.
         contribute: [authDocument(boot)],
+        /**
+         * One decision for the page, the document and the explorer's own
+         * assets. `ReferenceMiddleware` runs the same function through `gate()`,
+         * so the Scalar page this app mounts itself is covered by it too.
+         *
+         * Spread rather than assigned, because `exactOptionalPropertyTypes`
+         * refuses an explicit `undefined` and locally there is no gate at all.
+         */
+        ...(authorize === undefined ? {} : { authorize }),
       };
     },
-    inject: [AppConfigService] as const,
+    inject: [AppConfigService, Auth] as const,
   }),
   httpOptions(boot),
 );
@@ -116,7 +135,13 @@ app.enableCors({ origin: cors.origin, credentials: config.get('isProd') });
  * class self-binds into the scope that asks first, and `app.use` asks from the
  * app root, which is the one scope where the explorer is visible.
  */
-app.use(StaticFiles, HomeMiddleware, ReferenceMiddleware);
+/**
+ * Compression first of these, so it wraps the responses the three below produce:
+ * the chat page, the explorer shell and Scalar's bundle are all text and all
+ * worth compressing, and a `Response` is only compressed by a middleware that
+ * sees it on the way out.
+ */
+app.use(Compression, StaticFiles, HomeMiddleware, ReferenceMiddleware);
 
 app.enableShutdownHooks();
 const cancelWatchdog = forceExitAfter();
@@ -137,7 +162,7 @@ logger.info(`${appConfig.name} listening`, {
   env: appConfig.env,
   docs: `${url}${appConfig.prefix}/${boot.docs.path}`,
   openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
-  health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
+  health: `${url}${appConfig.prefix}/${HEALTH_ROUTES.READINESS}`,
   /**
    * `/ok`, not the bare mount.
    *

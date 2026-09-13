@@ -13,7 +13,11 @@ import {
   type UserPasswordResetJob,
   type UserRegisteredJob,
 } from '../events/events.js';
-import { EmailService } from '../services/email.service.js';
+import { EmailService } from '@dunx/infra/email';
+import { AppConfigService } from '../../config/app.config.service.js';
+import Invite from '../email/templates/invite.js';
+import PasswordReset from '../email/templates/password-reset.js';
+import Welcome from '../email/templates/welcome.js';
 
 /**
  * A job handler is a method with a decorator and nothing else - no class decorator,
@@ -27,20 +31,32 @@ import { EmailService } from '../services/email.service.js';
  * `WorkerFactory.create(WorkerModule)` here.
  */
 export class NotificationJobs {
+  /** The app's own public origin, which is the one link a welcome mail needs. */
+  readonly #signInUrl: string;
+
   constructor(
     private readonly email: EmailService,
     private readonly events: EventsPublisher,
     private readonly logger: Logger,
-  ) {}
+    config: AppConfigService,
+  ) {
+    this.#signInUrl = config.get('auth').baseUrl;
+  }
 
   @JobHandler({ queue: QUEUES.NOTIFICATIONS, name: JOBS.USER_REGISTERED })
   async registered(job: Job<UserRegisteredJob>): Promise<{ notified: string }> {
     const { userId, email, name } = job.data;
 
-    await this.email.send({
+    /**
+     * `sendTemplate` renders through the same `ReactEmailRenderer` instance
+     * `bun run mail:preview` loads, so what an inbox gets is what the preview
+     * showed. The bodies are not built here at all.
+     */
+    await this.email.sendTemplate({
       to: email,
       subject: 'Welcome',
-      body: `Hello ${name}, your account is ready.`,
+      template: Welcome,
+      props: { name, signInUrl: this.#signInUrl },
     });
 
     // Two topics: the user's own, and the admin room. Written by the worker
@@ -69,10 +85,11 @@ export class NotificationJobs {
   ): Promise<{ notified: string }> {
     const { userId, email, url } = job.data;
 
-    await this.email.send({
+    await this.email.sendTemplate({
       to: email,
       subject: 'Reset your password',
-      body: `Follow this link to choose a new password: ${url}`,
+      template: PasswordReset,
+      props: { url },
     });
 
     this.logger.info('handled user.password_reset', { userId });
@@ -88,12 +105,11 @@ export class NotificationJobs {
   async invited(job: Job<UserInvitedJob>): Promise<{ notified: string }> {
     const { inviteId, email, role, inviteCode, expiresAt } = job.data;
 
-    await this.email.send({
+    await this.email.sendTemplate({
       to: email,
       subject: 'You have been invited',
-      body:
-        `You have been invited to join as ${role}. Your code is ${inviteCode}. ` +
-        `It expires on ${new Date(expiresAt).toUTCString()}.`,
+      template: Invite,
+      props: { role, inviteCode, expiresAt },
     });
 
     this.events.publish(TOPICS.ADMINS, EVENTS.NOTIFICATION, {
@@ -109,10 +125,12 @@ export class NotificationJobs {
   async banned(job: Job<UserBannedJob>): Promise<{ notified: string }> {
     const { userId, email, reason } = job.data;
 
+    // No template: one sentence, and a React tree for it would be ceremony.
+    // `send` and `sendTemplate` are both on the service for exactly this.
     await this.email.send({
       to: email,
       subject: 'Your account has been suspended',
-      body: reason,
+      text: reason,
     });
 
     this.events.publish(TOPICS.ADMINS, EVENTS.NOTIFICATION, {

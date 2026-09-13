@@ -8,7 +8,7 @@ import {
   type Input,
 } from '@dunx/http';
 import { ApiDoc } from '@dunx/openapi';
-import { Throttle } from '../../core/decorators/throttle.decorator.js';
+import { ThrottleUnlessLocal } from '../../core/decorators/throttle.decorator.js';
 import type { SanitizedUser } from '../dto/user.dto.js';
 import { UserRole } from '../schema/user.schema.js';
 import {
@@ -49,10 +49,7 @@ export class InvitesController {
    * minutes rather than seconds. Unthrottled locally, because otherwise the
    * first thing anyone building against it hits is their own rate limit.
    */
-  @Throttle({
-    limit: 10,
-    windowSeconds: { local: 0, dev: 60, stage: 600, prod: 600 },
-  })
+  @ThrottleUnlessLocal({ limit: 10, windowSeconds: 600 })
   @ApiDoc({ tags: ['invites'], summary: 'Invite an address' })
   @Roles(UserRole.ADMIN)
   @Post('/', createInvite)
