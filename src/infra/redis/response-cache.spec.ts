@@ -25,9 +25,6 @@ const source = {
   QUEUE_PREFIX: `test-${crypto.randomUUID()}`,
   THROTTLE_PREFIX: `test-${crypto.randomUUID()}`,
   THROTTLE_LIMIT: '10000',
-  // Outside `local` the drain is 5s, and a suite closing a server per file
-  // pays it. See petarzarkov/dunx#146.
-  HEALTH_DRAIN_MS: '0',
   CACHE_PREFIX: `test-${crypto.randomUUID()}`,
   SEED_ADMIN_EMAIL: 'admin@local.dev',
   SEED_ADMIN_PASSWORD: 'admin-password',

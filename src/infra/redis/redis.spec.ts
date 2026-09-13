@@ -4,8 +4,7 @@ import { AppModule } from '../../app.module.js';
 import { validateConfig } from '../../config/env.validation.js';
 import { httpOptions } from '../../http.options.js';
 import { bearer, signIn } from '../../test-support/session.js';
-import { Cache } from '@dunx/infra/cache';
-import { DegradingCacheStore } from '../cache/degrading-store.js';
+import { Cache, DegradingCacheStore } from '@dunx/infra/cache';
 
 /**
  * The Redis-backed areas, in both states.
@@ -149,7 +148,8 @@ describe('with a broker that will not answer', () => {
 
     expect(value).toBe('fresh');
     expect(computed).toBe(1);
-    expect(store.reachability.reachable).toBe(false);
+    // `degraded` is the shipped store's own flag, set by the failed read above.
+    expect(store.degraded).toBe(true);
   });
 
   /**
