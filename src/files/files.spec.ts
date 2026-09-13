@@ -74,7 +74,7 @@ beforeAll(async () => {
   });
 
   adminToken = await signIn(server, 'admin@local.dev', 'admin-password');
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();

@@ -76,6 +76,13 @@ const nextFrame = (
     socket.addEventListener('message', listener);
   });
 
+/**
+ * The explicit timeout is load-bearing. Bun's default for a hook is 5 s, and this
+ * one boots a container and a server before the first socket opens - comfortably
+ * under it on an idle machine and not under it on a busy one. The failure is an
+ * `(unnamed)` test at just over 5000 ms, naming nothing, which is exactly the
+ * argument `e2e/setup/preload.ts` already makes for its own hooks.
+ */
 beforeAll(async () => {
   server = await createTestServer({
     modules: [AppModule.forRoot({ source, logLevel: 'fatal' })],
@@ -88,7 +95,7 @@ beforeAll(async () => {
   // prefixes discovered controller routes, and a gateway is mounted at the path
   // `@Gateway()` names.
   wsBase = server.url.replace(/^http/, 'ws').replace(/\/$/, '');
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();

@@ -85,7 +85,7 @@ beforeAll(async () => {
     'cache-other@local.dev',
     'Other-password-1!',
   ));
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();

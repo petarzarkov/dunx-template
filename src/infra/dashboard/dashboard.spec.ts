@@ -45,7 +45,7 @@ beforeAll(async () => {
     'dash-user@local.dev',
     'Dash-user-password-1!',
   ));
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();

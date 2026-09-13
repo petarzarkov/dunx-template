@@ -123,7 +123,7 @@ beforeAll(async () => {
     // The worker opens its own container and one bullmq Worker per queue.
     await Bun.sleep(2500);
   }
-});
+}, 30_000);
 
 afterAll(async () => {
   worker?.kill('SIGKILL');

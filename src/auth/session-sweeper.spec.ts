@@ -45,7 +45,7 @@ beforeAll(async () => {
   });
   db = server.app.get(SyncDatabase) as SyncDatabase<typeof schema>;
   sweeper = new SessionSweeper(db, server.app.get(Logger));
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();

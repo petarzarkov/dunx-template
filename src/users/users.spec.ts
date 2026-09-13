@@ -64,7 +64,7 @@ beforeAll(async () => {
       headers: asAdmin(),
     })
     .then((r) => r.body)) as unknown as SanitizedUser;
-});
+}, 30_000);
 
 afterAll(async () => {
   await server.close();
