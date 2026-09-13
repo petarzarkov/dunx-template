@@ -157,6 +157,11 @@ export const validateConfig = (env: ConfigSource) => {
       },
     },
     invites: { ttlHours: vars.INVITE_TTL_HOURS },
+    amqp: {
+      url: vars.AMQP_URL,
+      consume: vars.AMQP_CONSUME,
+      exchange: vars.AMQP_EXCHANGE,
+    },
   };
 };
 

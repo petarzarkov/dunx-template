@@ -5,6 +5,7 @@ import {
   MemoryIndicator,
   MemoryOptions,
 } from '@dunx/http';
+import { AmqpConnection } from '@dunx/infra/amqp';
 import { DbConnection } from '@dunx/infra/db';
 import { Storage } from '@dunx/infra/files';
 import { JobPublisher } from '@dunx/infra/queue';
@@ -15,6 +16,7 @@ import { DegradingCacheStore } from '../cache/degrading-store.js';
 import { BuildInfoController } from './build-info.controller.js';
 import {
   CacheIndicator,
+  DegradableAmqpIndicator,
   DegradableStorageIndicator,
   QueueIndicator,
 } from './indicators.js';
@@ -55,6 +57,7 @@ export class AppHealthModule {
           useFactory: (
             db: DbConnection,
             storage: Storage,
+            broker: AmqpConnection,
             publisher: JobPublisher,
             cache: DegradingCacheStore,
             config: AppConfigService,
@@ -66,6 +69,9 @@ export class AppHealthModule {
               new CacheIndicator(cache),
               new QueueIndicator(publisher, Object.values(QUEUES)),
               new DegradableStorageIndicator(storage),
+              // Non-critical for the same reason the queue is: an announcement
+              // nobody heard is not a reason to stop serving requests.
+              new DegradableAmqpIndicator(broker),
               new MemoryIndicator(
                 new MemoryOptions({
                   maxRssBytes: config.get('service').maxMemoryMb * 1024 * 1024,
@@ -83,6 +89,7 @@ export class AppHealthModule {
           inject: [
             DbConnection,
             Storage,
+            AmqpConnection,
             JobPublisher,
             DegradingCacheStore,
             AppConfigService,

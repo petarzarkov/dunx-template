@@ -1,4 +1,5 @@
 import {
+  AmqpIndicator,
   HealthIndicator,
   StorageIndicator,
   type ProbeResult,
@@ -89,5 +90,14 @@ export class CacheIndicator extends HealthIndicator {
  * the contract rather than an option on this indicator.
  */
 export class DegradableStorageIndicator extends StorageIndicator {
+  override readonly critical = false;
+}
+
+/**
+ * `AmqpIndicator`, made non-critical, for the reason the queue one is: a broker
+ * this app announces to and does not read from is not something to shed traffic
+ * over. A subscriber that misses an event is the subscriber's problem to notice.
+ */
+export class DegradableAmqpIndicator extends AmqpIndicator {
   override readonly critical = false;
 }

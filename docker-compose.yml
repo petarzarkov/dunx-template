@@ -105,5 +105,32 @@ services:
       timeout: 3s
       retries: 5
 
+  # RabbitMQ, behind a profile like the rest:
+  #
+  #   docker compose --profile amqp up -d
+  #
+  # Then set AMQP_URL=amqp://dunx:dunx@localhost:5672 and the domain events this
+  # app announces have somewhere to go. The management UI is http://localhost:15672.
+  #
+  # This is beside bullmq, not instead of it: a job is work this system owes, an
+  # event is a fact other services subscribe to, and a bullmq job has exactly one
+  # consumer by construction.
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: dunx-template-rabbitmq
+    restart: unless-stopped
+    profiles: ['amqp']
+    ports:
+      - '${AMQP_PORT:-5672}:5672'
+      - '${AMQP_UI_PORT:-15672}:15672'
+    environment:
+      RABBITMQ_DEFAULT_USER: dunx
+      RABBITMQ_DEFAULT_PASS: dunx
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   minio-data:

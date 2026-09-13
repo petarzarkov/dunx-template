@@ -15,6 +15,8 @@ import {
 } from '../events/events.js';
 import { EmailService } from '@dunx/infra/email';
 import { AppConfigService } from '../../config/app.config.service.js';
+import { DOMAIN_EVENTS } from '../messaging/domain-events.js';
+import { DomainPublisher } from '../messaging/domain-publisher.js';
 import Invite from '../email/templates/invite.js';
 import PasswordReset from '../email/templates/password-reset.js';
 import Welcome from '../email/templates/welcome.js';
@@ -39,6 +41,7 @@ export class NotificationJobs {
     private readonly events: EventsPublisher,
     private readonly logger: Logger,
     config: AppConfigService,
+    private readonly domain: DomainPublisher,
   ) {
     this.#signInUrl = config.get('auth').baseUrl;
   }
@@ -68,6 +71,16 @@ export class NotificationJobs {
     this.events.publish(TOPICS.ADMINS, EVENTS.NOTIFICATION, {
       event: JOBS.USER_REGISTERED,
       payload: { userId, email },
+    });
+
+    /**
+     * Announced after the work, not instead of it. The job is what this system
+     * owed; this is what it tells anyone else who cares, and it cannot fail the
+     * handler.
+     */
+    await this.domain.announce(DOMAIN_EVENTS.USER_REGISTERED, {
+      userId,
+      email,
     });
 
     this.logger.info('handled user.registered', { userId });

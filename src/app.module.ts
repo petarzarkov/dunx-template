@@ -19,6 +19,7 @@ import { ImagesConfigModule } from './infra/images/images.module.js';
 import { QueuesModule } from './infra/queue/queue.module.js';
 import { RedisCacheModule } from './infra/redis/redis.module.js';
 import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
+import { AppMessagingModule } from './notifications/messaging/messaging.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -139,6 +140,9 @@ export class AppModule {
         // After DatabaseModule, so better-auth reuses the connection it opened.
         AccountsModule,
         NotificationsModule.forRoot({ publisher: 'socket' }),
+        // Announces; does not consume. A web process that started consuming to
+        // send a message would be a surprise.
+        AppMessagingModule.forRoot(),
         AppHealthModule.forRoot(),
         UsersModule,
         FilesFeatureModule.forRoot(),
@@ -189,6 +193,8 @@ export class WorkerModule {
         ...foundation(options),
         QueuesModule.forRoot({ controllers: false }),
         NotificationsModule.forRoot({ publisher: 'relay' }),
+        // The consuming side lives with the other background work.
+        AppMessagingModule.forRoot({ consume: true }),
         FilesFeatureModule.forRoot({ controllers: false }),
       ],
     };
