@@ -54,6 +54,13 @@ const DEFAULTS: Record<string, string> = {
   // process, so a suite needs its own namespace and enough headroom to finish.
   THROTTLE_LIMIT: '10000',
   THROTTLE_PREFIX: `e2e-${crypto.randomUUID()}`,
+  /**
+   * The production default is 500 ms, and the websocket relay is built with
+   * `maxRetries: 0` - so on a cold CI runner the boot subscribe can miss a
+   * broker that is still starting, and the node stays deaf until a bounded
+   * retry lands. This suite is testing the round trip, not the timeout.
+   */
+  REDIS_CONNECT_TIMEOUT_MS: '5000',
 };
 
 /**
@@ -88,6 +95,31 @@ const ENV = { ...DEFAULTS, ...e2eEnv() };
 
 const DB_PATH =
   Bun.env['SQLITE_DB_PATH'] ?? ENV['SQLITE_DB_PATH'] ?? './.tmp/e2e.db';
+
+export const APP_DIR = new URL('../..', import.meta.url).pathname;
+
+/**
+ * Exactly what the server process was given.
+ *
+ * Exported because the queue round trip spawns a **worker**, and the two have to
+ * agree on the queue prefix, the relay channel, the database and the broker. A
+ * worker spawned from `process.env` alone inherits none of the defaults this
+ * file supplies, which on a machine with no `e2e/.env` - every CI runner - is a
+ * different queue and a job nobody consumes.
+ */
+export const serverEnv = (): Record<string, string> => ({
+  ...(process.env as Record<string, string>),
+  ...ENV,
+  SQLITE_DB_PATH: DB_PATH,
+});
+
+/**
+ * Reads a piped stream into a buffer as it arrives, and hands back a getter.
+ *
+ * Exported for the same reason: a pipe nobody reads fills at 64 KiB and blocks
+ * the child, and a spawned process whose output is discarded fails silently.
+ */
+export { drain };
 const API_URL =
   Bun.env['E2E_API_URL'] ?? ENV['E2E_API_URL'] ?? 'http://127.0.0.1:3999/api';
 
@@ -163,12 +195,12 @@ export const initializeTestContext = async (): Promise<TestContext> => {
   }
 
   server = Bun.spawn(['bun', 'src/main.ts'], {
-    cwd: new URL('../..', import.meta.url).pathname,
+    cwd: APP_DIR,
     // `e2e/.env` wins over the ambient environment, deliberately. Bun auto-loads a
     // root `.env` into this process, and if that set API_PORT the server would
     // listen somewhere the suite is not polling - which is the same class of bug
     // as the one this parsing fixes.
-    env: { ...process.env, ...ENV, SQLITE_DB_PATH: DB_PATH },
+    env: serverEnv(),
     stdout: 'pipe',
     stderr: 'pipe',
   });

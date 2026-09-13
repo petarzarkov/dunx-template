@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Subprocess } from 'bun';
-import { getTestContext } from '../setup/context.js';
+import { APP_DIR, drain, getTestContext, serverEnv } from '../setup/context.js';
 import { frame, open } from '../utils/ws-client.js';
 
 interface User {
@@ -15,8 +15,6 @@ interface Caller {
   email: string;
   roles: string[];
 }
-
-const APP_DIR = new URL('../..', import.meta.url).pathname;
 
 /**
  * Whether a broker is reachable, probed at **module scope**.
@@ -43,19 +41,33 @@ const queueUp = await (async (): Promise<boolean> => {
 })();
 
 let worker: Subprocess | undefined;
+let workerOutput: () => string = () => '';
 
 beforeAll(async () => {
-  if (queueUp) {
-    // The round trip below needs something to consume the job. A worker is its
-    // own container in its own process, which is the whole point of the test.
-    worker = Bun.spawn(['bun', 'src/worker.ts'], {
-      cwd: APP_DIR,
-      env: { ...process.env, LOG_LEVEL: 'fatal' },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    await Bun.sleep(2500);
-  }
+  if (!queueUp) return;
+
+  /**
+   * The round trip needs something to consume the job, and a worker is its own
+   * container in its own process - which is the whole point of the test.
+   *
+   * `serverEnv()` rather than `process.env`: the two processes have to agree on
+   * the queue prefix, the relay channel and the broker, and the defaults that
+   * make them agree live in the setup file rather than the environment.
+   */
+  worker = Bun.spawn(['bun', 'src/worker.ts'], {
+    cwd: APP_DIR,
+    env: serverEnv(),
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  // Drained, or the pipe fills and blocks the child. It is also the only way to
+  // find out why a worker that failed to boot never consumed anything.
+  const out = drain(worker.stdout as ReadableStream<Uint8Array> | undefined);
+  const err = drain(worker.stderr as ReadableStream<Uint8Array> | undefined);
+  workerOutput = () => `${out()}${err()}`;
+
+  await Bun.sleep(2500);
 }, 30_000);
 
 afterAll(() => {
@@ -187,32 +199,65 @@ describe('a job published by the web process reaches a socket', () => {
       const socket = await open(origin, adminToken);
       await frame(socket, 'connected');
 
-      const email = `roundtrip-${crypto.randomUUID()}@example.com`;
+      /**
+       * Every address this test created, matched against rather than the last
+       * one, because the trigger is retried below.
+       *
+       * Matching on content at all is because the queue outlives the process
+       * that filled it: a rerun against the same broker delivers a leftover
+       * notification for somebody else's job first.
+       */
+      const mine = new Set<string>();
+      const notification = frame(socket, 'notification', {
+        timeoutMs: 25_000,
+        where: (received) => {
+          const email = (received.data as { payload?: { email?: string } })
+            .payload?.email;
+          return email !== undefined && mine.has(email);
+        },
+      });
 
       /**
-       * Listening before the write, or the notification races the upgrade, and
-       * matching on **this** email: the queue outlives the process that filled
-       * it, so a rerun against the same broker delivers leftovers first.
+       * Published more than once, spaced out.
+       *
+       * The web node subscribes to the relay channel at boot with
+       * `maxRetries: 0`, and recovers from a failed subscribe on a bounded
+       * timer - so a single publish can land in the gap and reach nobody. One
+       * retry is the difference between asserting the round trip and asserting
+       * that the relay happened to be warm.
        */
-      const notification = frame(socket, 'notification', {
-        timeoutMs: 20_000,
-        where: (received) =>
-          (received.data as { payload?: { email?: string } }).payload?.email ===
+      const publish = async (): Promise<void> => {
+        const email = `roundtrip-${crypto.randomUUID()}@example.com`;
+        mine.add(email);
+        const created = await api.post<User>('users', {
           email,
-      });
+          name: 'Round Trip',
+          password: 'Roundtrip-password-1!',
+        });
+        expect(created.status).toBe(201);
+      };
 
-      const created = await api.post<User>('users', {
-        email,
-        name: 'Round Trip',
-        password: 'Roundtrip-password-1!',
-      });
-      expect(created.status).toBe(201);
+      await publish();
+      const retry = setInterval(() => void publish(), 6000);
 
-      const received = await notification;
-      expect(received.data).toMatchObject({
-        event: 'user.registered',
-        payload: { email },
-      });
+      // Without the worker's own output a timeout here says only "no frame",
+      // which is the one thing already known.
+      const received = await notification
+        .catch((error: Error) => {
+          throw new Error(
+            `${error.message}\nworker output:\n${workerOutput()}`,
+          );
+        })
+        .finally(() => {
+          clearInterval(retry);
+        });
+
+      expect(received.data).toMatchObject({ event: 'user.registered' });
+      expect(
+        mine.has(
+          (received.data as { payload: { email: string } }).payload.email,
+        ),
+      ).toBe(true);
 
       socket.close();
     },
