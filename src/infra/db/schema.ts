@@ -4,3 +4,7 @@ export { verifications } from '../../auth/schema/verification.schema.js';
 export { auditLog, AuditAction } from '../../audit/schema/audit-log.schema.js';
 export { files } from '../../files/schema/file.schema.js';
 export { users, UserRole } from '../../users/schema/user.schema.js';
+export {
+  invites,
+  InviteStatus,
+} from '../../users/invites/schema/invite.schema.js';

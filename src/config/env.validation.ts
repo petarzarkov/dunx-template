@@ -142,6 +142,7 @@ export const validateConfig = (env: ConfigSource) => {
         password: vars.SEED_ADMIN_PASSWORD,
       },
     },
+    invites: { ttlHours: vars.INVITE_TTL_HOURS },
   };
 };
 

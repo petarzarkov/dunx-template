@@ -9,6 +9,7 @@ import {
   TOPICS,
   userTopic,
   type UserBannedJob,
+  type UserInvitedJob,
   type UserPasswordResetJob,
   type UserRegisteredJob,
 } from '../events/events.js';
@@ -76,6 +77,32 @@ export class NotificationJobs {
 
     this.logger.info('handled user.password_reset', { userId });
     return { notified: userId };
+  }
+
+  /**
+   * The invite, delivered. The code is in the mail and nowhere else: it is not
+   * logged, not published to a socket, and the admin room is told an address was
+   * invited without being told what would let them redeem it.
+   */
+  @JobHandler({ queue: QUEUES.NOTIFICATIONS, name: JOBS.USER_INVITED })
+  async invited(job: Job<UserInvitedJob>): Promise<{ notified: string }> {
+    const { inviteId, email, role, inviteCode, expiresAt } = job.data;
+
+    await this.email.send({
+      to: email,
+      subject: 'You have been invited',
+      body:
+        `You have been invited to join as ${role}. Your code is ${inviteCode}. ` +
+        `It expires on ${new Date(expiresAt).toUTCString()}.`,
+    });
+
+    this.events.publish(TOPICS.ADMINS, EVENTS.NOTIFICATION, {
+      event: JOBS.USER_INVITED,
+      payload: { inviteId, email, role },
+    });
+
+    this.logger.info('handled user.invited', { inviteId });
+    return { notified: email };
   }
 
   @JobHandler({ queue: QUEUES.NOTIFICATIONS, name: JOBS.USER_BANNED })

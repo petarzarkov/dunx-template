@@ -57,6 +57,9 @@ export const authVarsSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GITHUB_OAUTH_CLIENT_ID: z.string().optional(),
   GITHUB_OAUTH_CLIENT_SECRET: z.string().optional(),
+  /** How long an invite code stays redeemable. A week, like the original. */
+  INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(8760).default(168),
+
   LINKEDIN_OAUTH_CLIENT_ID: z.string().optional(),
   LINKEDIN_OAUTH_CLIENT_SECRET: z.string().optional(),
 
