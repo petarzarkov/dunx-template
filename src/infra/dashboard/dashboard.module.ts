@@ -1,6 +1,7 @@
 import { Auth, rolesOf } from '@dunx/auth';
 import { DashboardModule } from '@dunx/dashboard';
 import type { DynamicModule } from '@dunx/core';
+import { CacheMetrics } from '@dunx/infra/cache';
 import { JobPublisher } from '@dunx/infra/queue';
 import { RedisConnection } from '@dunx/infra/redis';
 import type { BunRequest } from 'bun';
@@ -47,6 +48,7 @@ export class AppDashboardModule {
         publisher: JobPublisher,
         redis: RedisConnection,
         config: AppConfigService,
+        cacheStats: CacheMetrics,
       ) => ({
         path: DASHBOARD_PATH,
         title: `${config.get('app').name} ops`,
@@ -57,6 +59,8 @@ export class AppDashboardModule {
          */
         queueNames: Object.values(QUEUES),
         redis,
+        // `CacheModule.forRoot(..., { metrics: true })` is what fills this.
+        cacheStats,
         config: config,
         openApiPath: `/${config.get('app').prefix}/${config.get('docs').path}`,
         // The app's own front page, so bull-board's header is not a dead end.
@@ -74,7 +78,13 @@ export class AppDashboardModule {
           );
         },
       }),
-      inject: [Auth, JobPublisher, RedisConnection, AppConfigService] as const,
+      inject: [
+        Auth,
+        JobPublisher,
+        RedisConnection,
+        AppConfigService,
+        CacheMetrics,
+      ] as const,
     });
   }
 }

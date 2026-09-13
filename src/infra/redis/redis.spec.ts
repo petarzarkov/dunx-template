@@ -4,7 +4,8 @@ import { AppModule } from '../../app.module.js';
 import { validateConfig } from '../../config/env.validation.js';
 import { httpOptions } from '../../http.options.js';
 import { bearer, signIn } from '../../test-support/session.js';
-import { CacheService } from './services/cache.service.js';
+import { Cache } from '@dunx/infra/cache';
+import { DegradingCacheStore } from '../cache/degrading-store.js';
 
 /**
  * The Redis-backed areas, in both states.
@@ -109,8 +110,15 @@ describe('with a broker that will not answer', () => {
     }
   });
 
+  /**
+   * The contract the whole template rests on, at the one seam that has to hold
+   * it: `Cache.wrap` throws out of an unreachable `RedisCacheStore`, so
+   * `DegradingCacheStore` turns that into a miss and the value is computed.
+   * Without it every cached route 500s on a machine with no Redis.
+   */
   test('the cache reads through to the computed value', async () => {
-    const cache = server.app.get(CacheService);
+    const cache = server.app.get(Cache);
+    const store = server.app.get(DegradingCacheStore);
     let computed = 0;
     const value = await cache.wrap('spec:key', () => {
       computed += 1;
@@ -119,7 +127,24 @@ describe('with a broker that will not answer', () => {
 
     expect(value).toBe('fresh');
     expect(computed).toBe(1);
-    expect((await cache.status()).reachable).toBe(false);
+    expect(store.reachability.reachable).toBe(false);
+  });
+
+  /**
+   * And the L1 half: with the backend gone the tier still answers from memory,
+   * so a hot key costs one recompute per process rather than one per request.
+   */
+  test('a second read is served from L1 even with the backend gone', async () => {
+    const cache = server.app.get(Cache);
+    let computed = 0;
+    const compute = () => {
+      computed += 1;
+      return 'fresh';
+    };
+
+    await cache.wrap('spec:l1', compute);
+    await cache.wrap('spec:l1', compute);
+    expect(computed).toBe(1);
   });
 });
 
@@ -141,20 +166,23 @@ describe('with a live broker', () => {
 
   test('the cache round trips a value with a TTL', async () => {
     if (!live) return;
-    const cache = (server as TestServer).app.get(CacheService);
+    const cache = (server as TestServer).app.get(Cache);
     const key = `spec:${crypto.randomUUID()}`;
 
-    await cache.set(key, { hello: 'world' }, 30);
+    // Milliseconds, not seconds: the framework's unit throughout, and the one
+    // thing that changes shape when an app moves off a Redis-native TTL.
+    await cache.set(key, { hello: 'world' }, 30_000);
     expect(await cache.get<{ hello: string }>(key)).toEqual({
       hello: 'world',
     });
-    expect(await cache.del(key)).toBe(1);
+    // A boolean, where a Redis DEL answered a count.
+    expect(await cache.del(key)).toBe(true);
     expect(await cache.get(key)).toBeUndefined();
   });
 
   test('wrap computes once and serves the second call from the cache', async () => {
     if (!live) return;
-    const cache = (server as TestServer).app.get(CacheService);
+    const cache = (server as TestServer).app.get(Cache);
     const key = `spec:${crypto.randomUUID()}`;
     let computed = 0;
     const compute = () => {
@@ -162,8 +190,8 @@ describe('with a live broker', () => {
       return { n: 42 };
     };
 
-    expect(await cache.wrap(key, compute, 30)).toEqual({ n: 42 });
-    expect(await cache.wrap(key, compute, 30)).toEqual({ n: 42 });
+    expect(await cache.wrap(key, compute, 30_000)).toEqual({ n: 42 });
+    expect(await cache.wrap(key, compute, 30_000)).toEqual({ n: 42 });
     expect(computed).toBe(1);
     await cache.del(key);
   });

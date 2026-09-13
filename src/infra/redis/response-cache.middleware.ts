@@ -9,7 +9,7 @@ import type { BunRequest } from 'bun';
 import { CurrentUser } from '../../auth/services/current-user.service.js';
 import { AppConfigService } from '../../config/app.config.service.js';
 import { NO_CACHE } from '../../core/decorators/no-cache.decorator.js';
-import { CacheService } from './services/cache.service.js';
+import { Cache } from '@dunx/infra/cache';
 
 /** What is stored, so a replay can reproduce the response rather than guess it. */
 interface CachedResponse {
@@ -35,10 +35,9 @@ interface CachedResponse {
 export class ResponseCacheMiddleware implements Middleware {
   readonly #enabled: boolean;
   readonly #prefix: string;
-  #warned = false;
 
   constructor(
-    private readonly cache: CacheService,
+    private readonly cache: Cache,
     private readonly caller: CurrentUser,
     private readonly logger: Logger,
     config: AppConfigService,
@@ -105,28 +104,17 @@ export class ResponseCacheMiddleware implements Middleware {
     return `${this.#prefix}:${who}:${pathname}${search}`;
   }
 
-  async #read(key: string): Promise<CachedResponse | undefined> {
-    try {
-      return await this.cache.get<CachedResponse>(key);
-    } catch (error) {
-      this.#degrade(error);
-      return undefined;
-    }
+  /**
+   * No try/catch, and that is the point of `DegradingCacheStore`: an unreachable
+   * backend is a miss at the store rather than an exception every caller has to
+   * catch. This used to carry its own degrade-or-rethrow, and one copy of that
+   * rule is enough.
+   */
+  #read(key: string): Promise<CachedResponse | undefined> {
+    return this.cache.get<CachedResponse>(key);
   }
 
-  async #write(key: string, value: CachedResponse): Promise<void> {
-    try {
-      await this.cache.set(key, value);
-    } catch (error) {
-      this.#degrade(error);
-    }
-  }
-
-  /** Once per process, so an unreachable cache cannot print a line per request. */
-  #degrade(error: unknown): void {
-    if (!this.cache.isDown(error)) throw error;
-    if (this.#warned) return;
-    this.#warned = true;
-    this.logger.warn('response cache unavailable, serving every request live');
+  #write(key: string, value: CachedResponse): Promise<void> {
+    return this.cache.set(key, value);
   }
 }

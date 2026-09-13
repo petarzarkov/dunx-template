@@ -9,7 +9,7 @@ import { AppConfigService } from '../../config/app.config.service.js';
 import { NoCache } from '../../core/decorators/no-cache.decorator.js';
 import { SERVICE_ROUTES } from '../../constants.js';
 import { QUEUES } from '../../notifications/events/events.js';
-import { CacheService } from '../redis/services/cache.service.js';
+import { DegradingCacheStore } from '../cache/degrading-store.js';
 import * as schema from '../db/schema.js';
 
 export type IndicatorStatus = 'up' | 'down' | 'degraded';
@@ -49,7 +49,7 @@ export class HealthController {
   constructor(
     private readonly db: SyncDatabase<typeof schema>,
     private readonly config: AppConfigService,
-    private readonly cache: CacheService,
+    private readonly cache: DegradingCacheStore,
     private readonly storage: Storage,
     private readonly images: Images,
     private readonly publisher: JobPublisher,
@@ -73,15 +73,19 @@ export class HealthController {
       : { status: 'down', message: 'heap over limit', used, limit };
   }
 
+  /**
+   * A real read, not a ping and not the last-seen flag.
+   *
+   * The flag alone was wrong on a process that has served nothing yet: it starts
+   * optimistic, so a fresh container reported the cache healthy until something
+   * happened to use it. `probe()` touches the backend the same way the cache
+   * does, which is what makes the answer true at the moment it is asked.
+   */
   async #checkCache(): Promise<Indicator> {
-    const status = await this.cache.status();
-    return status.reachable
-      ? { status: 'up', url: status.url }
-      : {
-          status: 'degraded',
-          url: status.url,
-          message: status.note ?? 'unreachable',
-        };
+    const { reachable, note } = await this.cache.probe();
+    return reachable
+      ? { status: 'up' }
+      : { status: 'degraded', message: note ?? 'unreachable' };
   }
 
   /**

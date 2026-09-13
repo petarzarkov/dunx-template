@@ -10,6 +10,7 @@ import { AuditContextMiddleware } from './core/middlewares/audit-context.middlew
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { FilesFeatureModule } from './files/files.module.js';
 import { AppDashboardModule } from './infra/dashboard/dashboard.module.js';
+import { AppCacheModule } from './infra/cache/cache.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
 import { HealthModule } from './infra/health/health.module.js';
@@ -74,6 +75,8 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
     : LoggerModule.forRoot({ level: options.logLevel }),
   DatabaseModule.forRoot(),
   RedisCacheModule.forRoot(),
+  // After Redis: the L2 store is built over that connection.
+  AppCacheModule.forRoot(),
   StorageModule.forRoot(),
   ImagesConfigModule.forRoot(),
 ];
