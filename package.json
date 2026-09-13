@@ -2,11 +2,12 @@
   "name": "dunx-template",
   "version": "0.1.0",
   "private": true,
-  "description": "A production-shaped starter for dunx: validated config, structured logging, SQLite via drizzle, cursor pagination, OpenAPI, Docker and CI.",
+  "description": "A production-shaped starter for dunx on Bun: Better Auth, Drizzle, BullMQ with a worker process, websockets, object storage, OpenAPI, an ops dashboard, Docker and CI.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "prepare": "bun scripts/install-hooks.ts",
+    "check": "bun run lint:check && bun run format:check && bun run typecheck && bun test",
     "dev": "bun --watch src/main.ts",
     "start": "bun src/main.ts",
     "worker": "bun src/worker.ts",

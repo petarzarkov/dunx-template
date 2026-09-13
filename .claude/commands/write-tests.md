@@ -21,15 +21,15 @@ Ask (or infer) which tier(s) to write. `bun run test` runs unit + integration.
 
 - Import primitives from `bun:test`: `describe`, `it`/`test`, `expect`,
   `beforeEach`, `afterEach`, `mock`. There is **no** `jest`.
-- Bootstrap with `@nestjs/testing`:
-  `Test.createTestingModule({ providers: [...] }).compile()`.
-- Mock every dependency with `mock(() => undefined)`, provided via
-  `{ provide: SomeService, useValue: { method: mock(...) } }`; retrieve with
-  `module.get(SomeService)` to assert on calls.
-- Always provide a mock `ContextLogger` (`@arkv/nestjs-context-logger`) — most
-  services inject it.
+- A unit test needs no container. Construct the class with hand-built
+  collaborators: `new SessionSweeper(db, logger)`. Reach for `createTestApp`
+  from `@dunx/testing` only when the graph is the thing under test.
+- Mock with `mock(() => undefined)` and pass the double straight into the
+  constructor. `overrides: [provide(X, { useValue: y })]` replaces a provider by
+  token when you do build a container.
 - Reset call history in `afterEach` (`.mockClear()`); never share mutable state.
-- Reference: [`src/file/services/file.service.test.ts`](../../src/file/services/file.service.test.ts).
+- A pure rule with branches is worth its own test without a server:
+  `src/core/decorators/throttle.test.ts` is the pattern.
 
 ### Integration tests (`<name>.spec.ts`)
 

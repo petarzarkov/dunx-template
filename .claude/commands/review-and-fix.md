@@ -17,20 +17,19 @@ diff against the rules in AGENTS.md. Check for:
   or missing explicit constraint names — `uniqueIndex('UQ_table_cols')`,
   `index('table_cols_index')`, `.references(() => x.id, { onDelete: 'cascade' })`
   — using the `columns.ts` helpers (`uuidPk`, `createdAt`, `updatedAt`).
-- **Entities** hand-written instead of derived from the schema
-  (`withDateFormat(createSelectSchema(table, { …enum refinements }))` +
-  `createZodDto`); a `z.date()` column added **without** `withDateFormat`
-  (crashes Swagger generation at boot).
-- **Validation** using anything other than Zod (`createZodDto`) —
-  class-validator is not used.
+- **Response shapes** hand-written where a zod schema with `.meta({ id })` should
+  carry them, or a route schema shared across methods so it documents a status
+  the route never sends (`@Post` answers 201, `@Get` answers 200).
+- **Validation** anywhere but a zod schema on the route. There is no
+  class-validator and no `createZodDto`.
 - Roles typed as `string` where they should be `UserRole`; routes missing
-  `@Roles(...)` / `@Public()` where intended; user read anywhere but
-  `@CurrentUser()`.
-- `console.log` instead of the injected `ContextLogger`
-  (`@arkv/nestjs-context-logger`); plain `fetch` instead of `FetchService`.
-- Ad-hoc thrown errors where a standard Nest exception fits
-  (`NotFoundException`, `BadRequestException`, `ForbiddenException`, …);
-  literal HTTP status codes (`401`, `404`) where `HttpStatus.*` should be used.
+  `@Roles(...)` / `@Public()` where intended; the caller read from anywhere but
+  `CurrentUser` - there is no `@CurrentUser()` parameter decorator and there
+  cannot be one.
+- `console.log` instead of the injected `Logger`; plain `fetch` instead of
+  `HttpService` from `@dunx/http/client`.
+- Ad-hoc thrown errors where `HttpError` fits; literal status codes (`401`,
+  `404`) where `HttpStatusCode.*` should be used.
 - **User creation / password handling** done in app code — Better Auth owns
   password hashing (native Bun bcrypt); accounts are created via `auth.api`
   (`signUpEmail`), never a manual hash or a direct `user`/`account` insert.

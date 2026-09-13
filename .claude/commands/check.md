@@ -1,20 +1,29 @@
 ---
-description: Run the four post-implementation quality gates (lint, test, build, typecheck) and report results.
+description: Run every quality gate CI runs, in one command, and report what failed.
 ---
 
-Run the four quality gates **in order**, stopping only if a gate exits non-zero (but always report the final status of each):
+Run:
 
 ```
-bun run lint
-bun test
-bun run build
-bun run typecheck
+bun run check
+```
+
+That is `lint:check`, `format:check`, `typecheck` and `bun test`, in that order,
+stopping at the first failure. The **check** variants are deliberate: `bun run
+lint` and `bun run format` fix in place, which would let a violation pass here
+and fail in CI.
+
+The end-to-end suite is separate because it spawns a server:
+
+```
+bun run test:e2e
 ```
 
 For each gate:
 
-- If it **passes** → note it and continue.
-- If it **fails** → show the relevant error output, then stop and tell the user what needs fixing. Do NOT auto-fix unless the user asks.
+- If it **passes**, note it and continue.
+- If it **fails**, show the relevant output, then stop and say what needs
+  fixing. Do not auto-fix unless asked.
 
-After all gates pass (or after reporting the first failure), give a one-line summary:
-`✓ lint  ✓ test  ✓ build  ✓ typecheck` (or mark failing ones with `✗`).
+Finish with a one-line summary: `✓ lint  ✓ format  ✓ typecheck  ✓ test`, marking
+any failure with `✗`.
