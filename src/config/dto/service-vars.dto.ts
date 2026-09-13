@@ -73,6 +73,8 @@ export const serviceVarsSchema = z.object({
 
   DOCS_PATH: z.string().default('docs'),
   DOCS_JSON_PATH: z.string().default('openapi.json'),
+  /** Scalar, beside Swagger. The NestJS template served both, at these paths. */
+  DOCS_SCALAR_PATH: z.string().default('public'),
 
   TZ: z
     .string()

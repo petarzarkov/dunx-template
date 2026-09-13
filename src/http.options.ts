@@ -5,6 +5,7 @@ import { SERVICE_ROUTES } from './constants.js';
 import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
+import { DocsSessionMiddleware } from './core/middlewares/docs-session.middleware.js';
 import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 
 /**
@@ -33,6 +34,12 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
        * key, since an unmatched path has no controller or handler to key on.
        */
       DashboardMiddleware,
+      /**
+       * Also ahead of `SessionGuard`, for the same reason: the explorer routes
+       * are `@Public()`, so the guard would wave them through, and the pages
+       * are reached by a browser that has a cookie rather than a bearer token.
+       */
+      DocsSessionMiddleware,
       SessionGuard,
       ThrottleGuard,
       AuditContextMiddleware,

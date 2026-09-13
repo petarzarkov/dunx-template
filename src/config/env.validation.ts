@@ -64,6 +64,7 @@ export const validateConfig = (env: ConfigSource) => {
     docs: {
       path: vars.DOCS_PATH,
       jsonPath: vars.DOCS_JSON_PATH,
+      scalarPath: vars.DOCS_SCALAR_PATH,
     },
     static: { root: vars.STATIC_ROOT },
     cors: { origin: vars.CORS_ORIGIN, trustProxy: vars.TRUST_PROXY },

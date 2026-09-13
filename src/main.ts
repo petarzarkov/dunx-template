@@ -10,6 +10,7 @@ import { validateConfig } from './config/env.validation.js';
 import { httpOptions } from './http.options.js';
 import { forceExitAfter } from './core/force-exit.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
+import { ReferenceMiddleware } from './core/middlewares/reference.middleware.js';
 import { SERVICE_ROUTES } from './constants.js';
 
 /**
@@ -108,7 +109,14 @@ app.enableCors({ origin: cors.origin, credentials: config.get('isProd') });
  * carries no route metadata, the guard lets it through, and this answers it. With
  * the upstream `'guarded'` default the page would be a 401.
  */
-app.use(StaticFiles, HomeMiddleware);
+/**
+ * `ReferenceMiddleware` is deliberately not in any module's `providers`. It
+ * injects `OpenApiExplorer`, which `OpenApiModule` declares - and that module
+ * wraps `AppModule` as its root, so `AppModule` cannot see into it. An unbound
+ * class self-binds into the scope that asks first, and `app.use` asks from the
+ * app root, which is the one scope where the explorer is visible.
+ */
+app.use(StaticFiles, HomeMiddleware, ReferenceMiddleware);
 
 app.enableShutdownHooks();
 const cancelWatchdog = forceExitAfter();
