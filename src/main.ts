@@ -1,5 +1,5 @@
 import { Logger } from '@dunx/core';
-import { HttpFactory } from '@dunx/http';
+import { HttpFactory, StaticFiles } from '@dunx/http';
 import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
 import { SwaggerRenderer } from '@dunx/openapi/swagger';
 import { AppModule } from './app.module.js';
@@ -9,6 +9,7 @@ import { AppConfigService } from './config/app.config.service.js';
 import { validateConfig } from './config/env.validation.js';
 import { httpOptions } from './http.options.js';
 import { forceExitAfter } from './core/force-exit.js';
+import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { SERVICE_ROUTES } from './constants.js';
 
 /**
@@ -100,6 +101,14 @@ const { app: appConfig, cors } = config.values;
 app.setGlobalPrefix(appConfig.prefix);
 app.set('trust proxy', cors.trustProxy);
 app.enableCors({ origin: cors.origin, credentials: config.get('isProd') });
+
+/**
+ * Appended after `httpOptions.middleware`, so it sits behind `SessionGuard`. That
+ * is only safe because `notFound: 'public'` is set: a path matching no route
+ * carries no route metadata, the guard lets it through, and this answers it. With
+ * the upstream `'guarded'` default the page would be a 401.
+ */
+app.use(StaticFiles, HomeMiddleware);
 
 app.enableShutdownHooks();
 const cancelWatchdog = forceExitAfter();

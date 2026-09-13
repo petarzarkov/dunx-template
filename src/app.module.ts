@@ -1,10 +1,12 @@
 import type { ConfigSource, DynamicModule, ModuleRef } from '@dunx/core';
+import { StaticModule } from '@dunx/http';
 import { LoggerModule } from '@dunx/infra/logger';
 import { AccountsModule } from './auth/auth.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AppConfigModule } from './config/app.config.module.js';
 import { AppConfigService } from './config/app.config.service.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
+import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { FilesFeatureModule } from './files/files.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
@@ -98,6 +100,21 @@ export class AppModule {
       imports: [
         ...foundation(options),
         QueuesModule.forRoot(),
+        /**
+         * `public/` - the chat client, which is the only way to see the gateway
+         * without writing a websocket client by hand. Web process only: a worker
+         * serves nothing.
+         *
+         * `StaticFiles` is registered in `main.ts` rather than here, because the
+         * module binds the options and the app decides where in the chain the
+         * middleware sits.
+         */
+        StaticModule.forRootAsync({
+          useFactory: (config: AppConfigService) => ({
+            root: config.get('static').root,
+          }),
+          inject: [AppConfigService] as const,
+        }),
         // After DatabaseModule, so better-auth reuses the connection it opened.
         AccountsModule,
         NotificationsModule.forRoot({ publisher: 'socket' }),
@@ -126,7 +143,7 @@ export class AppModule {
        *    there while the trigger still fired - with the *previous* request's id.
        *    Global is correct, and the reason is worth keeping.
        */
-      providers: [AuditContextMiddleware, ThrottleGuard],
+      providers: [AuditContextMiddleware, ThrottleGuard, HomeMiddleware],
     };
   }
 }

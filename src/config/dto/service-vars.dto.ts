@@ -68,6 +68,9 @@ export const serviceVarsSchema = z.object({
   CORS_ORIGIN: z.string().default('*'),
   TRUST_PROXY: z.stringbool().default(false),
 
+  /** Where `StaticFiles` serves from. The chat client and the favicon live here. */
+  STATIC_ROOT: z.string().default('./public'),
+
   DOCS_PATH: z.string().default('docs'),
   DOCS_JSON_PATH: z.string().default('openapi.json'),
 
