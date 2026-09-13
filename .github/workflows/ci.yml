@@ -17,7 +17,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.14'
+          bun-version: '1.4.2'
 
       - name: Cache bun install
         uses: actions/cache@v4
@@ -51,6 +51,16 @@ jobs:
           curl -fsS http://127.0.0.1:3001/api/service/health | tee /dev/stderr | grep -q '"status":"ok"'
           curl -fsS http://127.0.0.1:3001/api/service/health | grep -q '"degraded":{"cache"'
           curl -fsS http://127.0.0.1:3001/api/openapi.json > /dev/null
+          # Both explorers, and the page StaticFiles serves at the root.
+          curl -fsS http://127.0.0.1:3001/api/docs > /dev/null
+          curl -fsS http://127.0.0.1:3001/api/public > /dev/null
+          curl -fsS -H 'accept: text/html' http://127.0.0.1:3001/ | grep -q 'dunx template'
+          # The dashboard is not a route, and an anonymous caller must not learn
+          # it exists.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/api/_dunx)" = 404
+          # A declared response reaches the document, which is what makes it
+          # usable for client codegen.
+          curl -fsS http://127.0.0.1:3001/api/openapi.json | grep -q 'PaginatedUsers'
           # Better Auth's own endpoints are in the document, contributed rather
           # than discovered.
           curl -fsS http://127.0.0.1:3001/api/openapi.json | grep -q '/api/auth/sign-in/email'
@@ -87,7 +97,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.14'
+          bun-version: '1.4.2'
 
       - run: bun install --frozen-lockfile
       - run: bun test
@@ -129,6 +139,8 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:3001/api/service/health | grep -q '"status":"ok"'
+          # public/ has to reach the image, and only a built image can prove it.
+          curl -fsS -H 'accept: text/html' http://127.0.0.1:3001/ | grep -q '<title>'
           docker logs dunx-template-ci
           docker rm -f dunx-template-ci
       - name: A production image with no auth secret refuses to boot

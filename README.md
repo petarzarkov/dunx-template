@@ -11,10 +11,11 @@ triggers, a single error mapper, an OpenAPI document and explorer served at
 runtime, unit / integration / e2e suites, Docker and CI.
 
 Plus every area that needs something running: **Better Auth** sessions with a
-global guard and roles, **BullMQ** queues with a separate worker process,
-**object storage** on local disk or S3, **image** processing on `Bun.Image`,
-**websocket** gateways with multi-node fan-out, admin-only **queue routes**, an
-outbound HTTP client with retries, and **Redis** caching and rate limiting.
+global guard, roles and invitations, **BullMQ** queues with a separate worker
+process, **object storage** on local disk or S3, **image** processing on
+`Bun.Image`, **websocket** gateways with multi-node fan-out and a page to watch
+them on, **cron** schedules, an **ops dashboard** with the real Bull Board on it,
+an outbound HTTP client with retries, and **Redis** caching and rate limiting.
 
 **None of it is required to be running.** An area whose service is absent reports
 that it is skipping and the app boots anyway: `bun run start`, `bun test` and
@@ -35,12 +36,18 @@ bun run start
 ```
 
 ```
+http://localhost:3001/                  the chat client, over the gateway below
 http://localhost:3001/api/service/health
-http://localhost:3001/api/docs          the API explorer, served at runtime
+http://localhost:3001/api/docs          Swagger UI, served at runtime
+http://localhost:3001/api/public        Scalar, over the same document
 http://localhost:3001/api/openapi.json  the document, served at runtime
+http://localhost:3001/api/_dunx         routes, providers, queues, health. Admin only
 http://localhost:3001/api/queues        queue depth and job inspection, admin only
 ws://localhost:3001/ws
 ```
+
+Outside `APP_ENV=local` the two explorers and the document ask for a session
+first, and the dashboard answers 404 to anyone who is not an admin.
 
 Nothing else is needed: the migrations, the audit triggers and the first
 administrator are all applied at boot. Every route but the health probes and
@@ -107,6 +114,7 @@ changes.
 | `bun run mig:gen`      | `drizzle-kit generate`                                                                                                                                                        |
 | `bun run mig:run`      | applies migrations without booting the app                                                                                                                                    |
 | `bun run seed`         | migrate, apply triggers, then `runSeeds`                                                                                                                                      |
+| `bun run create:admin` | creates or promotes an administrator, in any environment. The seeder refuses to run in production, so this is how a deployment gets its first one                             |
 | `bun run db:drop`      | deletes the SQLite file and its WAL sidecars                                                                                                                                  |
 | `bun run gen:openapi`  | exports `openapi.json` with no container and no server. The app serves the document itself at `/api/openapi.json`; this is for committing the contract and for client codegen |
 | `bun run gen:env:docs` | regenerates `docs/env-vars.md` from the zod env schemas                                                                                                                       |
@@ -123,26 +131,33 @@ src/
   config/                    zod env schemas, validateConfig, AppConfigService
   core/
     errors/error-mapper.ts   the one ErrorMapper: HttpError, ValidationError, SQLiteError
-    decorators/              @Throttle, over @dunx/http's own metadata mechanism
+    decorators/              @Throttle and @NoCache, over @dunx/http's own metadata
+    zod/schemas.ts           the shared email and password rules
     force-exit.ts            the shutdown watchdog, and why it exists
-    middlewares/             the audit-actor stamp, read from AuthContext
-                             app-level, and app.module.ts says why it stayed there
+    middlewares/             the audit-actor stamp read from AuthContext, the Scalar
+                             mount, the docs session gate, and the `/` page. The stamp
+                             is app-level, and app.module.ts says why it stayed there
   auth/                      Better Auth: options, module, schema, profile, admin seeder
   infra/
     db/                      schema, columns, migrations, triggers, seeds, DbModule wiring
-    redis/                   RedisModule, the cache and the rate-limit guard
+    redis/                   RedisModule, the cache, the GET response cache and the
+                             rate-limit guard
+    dashboard/               @dunx/dashboard, gated on an admin session
     queue/                   QueueModule, the admin-only queue routes, and the
                              module-scoped filter that degrades them to 503
     files/                   StorageModule: local disk or S3, selected by config
     images/                  ImagesModule over Bun.Image
     health/                  liveness, readiness per area, build info
   users/                     controller, service, repository, schema, DTOs
+    invites/                 invite an address, redeem the code on a public route
   files/                     upload, download, presign, thumbnails, the media job
   notifications/             the websocket gateway, the events publisher, job handlers
   audit/                     read side of the trigger-written audit_log
   test-support/              sign-in helpers shared by the integration suites
+  auth/services/             the session sweeper, the one @Cron in the app
+public/                      the chat client, served by StaticFiles
 e2e/                         suites against a spawned server
-scripts/                     build, migrate, seed, db-drop, gen-openapi
+scripts/                     build, migrate, seed, db-drop, gen-openapi, create-admin
 ```
 
 ## Things that will bite you
@@ -222,10 +237,13 @@ up as `fullSchema['user']`, so a barrel that exports `users` needs the explicit
 documentation says. Without it the first query is
 `BetterAuthError: The model "user" was not found in the schema object`.
 
-**A global guard also guards the 404.** `listen()` puts the global middleware in
-front of the not-found fallback, which is what gets an unmatched path logged and
-given a request id - and means an anonymous request for a path that does not
-exist is a 401 rather than a 404. Pinned in `src/users/users.spec.ts`.
+**A global guard would also guard the 404, so this app opts out.** `listen()`
+puts the global middleware in front of the not-found fallback, and `@dunx/http`
+defaults that fallback to `'guarded'` - so an anonymous request for a path that
+does not exist answers 401 rather than 404, and pays a session lookup to do it.
+`httpOptions` sets `notFound: 'public'` instead, and says why at the site. The
+miss is still logged and still gets a trace, which is the whole reason the
+fallback runs the global middleware at all.
 
 **A process that touched a down Redis does not exit on `SIGTERM`.** bullmq holds
 a connection whose retry timer outlives `close()`. Measured here at 30 seconds
@@ -237,14 +255,21 @@ resolves, with a referenced timer as the backstop.
 deployments sharing one need two `THROTTLE_PREFIX` values, and a test run needs
 its own or it inherits the last one's counters.
 
-**No response bodies in the OpenAPI document.** `RouteSchemas` has `body`,
-`query` and `params` and no `response`, so every success response is a bare
-description. `SanitizedUser` and friends carry `.meta({ id })` and never reach
-`components`. `src/openapi.spec.ts` pins this so it is visible when it changes.
+**A route schema shared across methods documents a status it never sends.**
+`response` is keyed by status, and `@Post` answers 201 where `@Get` answers 200 -
+so reusing one params schema across a GET and a POST silently documents the
+wrong one. Writing the audit e2e suite is what caught it on ban and unban, which
+now carry `status: 200` of their own.
 
-**`requestLogging.ignore` also turns off request ids.** `x-request-id` is set by
-the request-logging middleware, so an ignored path gets no correlation header and
-no async context either.
+**`requestLogging.ignore` also turns off tracing.** The `traceresponse` header is
+set by the request-logging middleware, so an ignored path gets no correlation
+header and no async context either.
+
+**It is `traceresponse`, not `x-request-id`.** dunx replaced the uuid request id
+with W3C trace context: the inbound header is `traceparent`, the response header
+is `traceresponse`, and a log line carries `traceId`, `spanId` and `traceFlags`
+where it used to carry `requestId`. A log pipeline filtering on `requestId`
+needs repointing.
 
 **Column names are spelled out.** `@dunx/infra`'s `SqliteOptions` forwards only
 `schema` to `drizzle()`, so `casing: 'snake_case'` and drizzle's query `logger`

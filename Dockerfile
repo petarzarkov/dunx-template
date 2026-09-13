@@ -5,12 +5,16 @@
 # That makes `@dunx/transform` a **runtime** dependency, not a build-time one, and
 # makes `bunfig.toml` load-bearing in the image. Both are easy to lose to a
 # `--production` install or an allowlist-shaped .dockerignore.
-FROM oven/bun:1.3.14-slim AS deps
+FROM oven/bun:1.4.2-slim AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production
+# `--ignore-scripts` because `prepare` runs `scripts/install-hooks.ts`, which is
+# not in this stage and would not be wanted if it were: an image has no git
+# repository and no commits to hook. Without it the build fails on a missing
+# module, which reads as a dependency problem and is not one.
+RUN bun install --frozen-lockfile --production --ignore-scripts
 
-FROM oven/bun:1.3.14-slim AS runtime
+FROM oven/bun:1.4.2-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update \
@@ -34,6 +38,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bunfig.toml ./
 COPY src ./src
 COPY scripts ./scripts
+# `StaticFiles` serves this, and `STATIC_ROOT` defaults to ./public relative to
+# WORKDIR. Without it the chat client is a 404 in the image and nowhere else.
+COPY public ./public
 
 RUN mkdir -p /app/data && chown -R bun:bun /app/data
 USER bun
