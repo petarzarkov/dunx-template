@@ -50,6 +50,21 @@ const redisUp = async (): Promise<boolean> => {
   }
 };
 
+/**
+ * The readiness envelope, which is `@dunx/http`'s rather than this app's: one
+ * flat list, each entry carrying its own `critical`. The old shape partitioned
+ * into `info` and `degraded`; `critical: false` says the same thing per check.
+ */
+interface HealthReport {
+  status: string;
+  draining: boolean;
+  uptimeMs: number;
+  checks: { name: string; state: string; critical: boolean; detail?: string }[];
+}
+
+const check = (report: HealthReport, name: string) =>
+  report.checks.find((c) => c.name === name);
+
 describe('with a broker that will not answer', () => {
   let server: TestServer;
   let token: string;
@@ -71,15 +86,16 @@ describe('with a broker that will not answer', () => {
   });
 
   test('health reports the cache and the queue degraded, and still passes', async () => {
-    const { status, body } = await server.json<{
-      status: string;
-      degraded: Record<string, { status: string }>;
-    }>('api/service/health');
+    const { status, body } =
+      await server.json<HealthReport>('api/health/ready');
 
     expect(status).toBe(200);
-    expect(body.status).toBe('ok');
-    expect(body.degraded['cache']?.status).toBe('degraded');
-    expect(body.degraded['queue']?.status).toBe('degraded');
+    // `up` overall with two checks down, because neither is critical: a cache
+    // and a queue that are unreachable are not reasons to shed traffic.
+    expect(body.status).toBe('up');
+    expect(check(body, 'cache')?.state).toBe('down');
+    expect(check(body, 'queue')?.state).toBe('down');
+    expect(check(body, 'cache')?.critical).toBe(false);
   });
 
   test('the queue routes answer 503 rather than hanging', async () => {
@@ -216,9 +232,9 @@ describe('with a live broker', () => {
 
   test('health reports the cache live', async () => {
     if (!live) return;
-    const { body } = await (server as TestServer).json<{
-      info: Record<string, { status: string }>;
-    }>('api/service/health');
-    expect(body.info['cache']?.status).toBe('up');
+    const { body } = await (server as TestServer).json<HealthReport>(
+      'api/health/ready',
+    );
+    expect(check(body, 'cache')?.state).toBe('up');
   });
 });

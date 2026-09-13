@@ -20,7 +20,7 @@ an outbound HTTP client with retries, and **Redis** caching and rate limiting.
 **None of it is required to be running.** An area whose service is absent reports
 that it is skipping and the app boots anyway: `bun run start`, `bun test` and
 `bun run test:e2e` all pass with nothing installed, and exercise the real thing
-when it is up. `/api/service/health` says which is which.
+when it is up. `/api/health/ready` says which is which.
 
 `MAPPING.md` is the NestJS-to-dunx concept table, including the one thing it listed as
 unportable that turned out not to be, and the one that came back and left again.
@@ -37,7 +37,7 @@ bun run start
 
 ```
 http://localhost:3001/                  the chat client, over the gateway below
-http://localhost:3001/api/service/health
+http://localhost:3001/api/health/ready
 http://localhost:3001/api/docs          Swagger UI, served at runtime
 http://localhost:3001/api/public        Scalar, over the same document
 http://localhost:3001/api/openapi.json  the document, served at runtime
@@ -79,7 +79,7 @@ bun run worker                # the consumer, in a second terminal
 **`REDIS_URL` is not needed for a local broker.** `Bun.RedisClient` resolves
 `$VALKEY_URL`, then `$REDIS_URL`, then `valkey://localhost:6379` on its own, so a
 container published on the default port is found with the variable left commented out
-in `.env` - which is why `/api/service/health` moves every area to `up` without it.
+in `.env` - which is why `/api/health/ready` moves every area to `up` without it.
 Set it when the broker is somewhere else:
 
 ```bash
@@ -96,7 +96,7 @@ docker compose --profile s3 up -d                     # valkey, minio, and a buc
 ```
 
 The cache, the rate limiter, the queue and websocket fan-out across nodes all go
-live, and `/api/service/health` moves those areas from `degraded` to `up`. Set
+live, and `/api/health/ready` moves those areas from `degraded` to `up`. Set
 `STORAGE_DRIVER=s3` with the five `S3_*` variables to put uploads in MinIO
 instead of on disk - the backend is one `StorageOptions` subclass and no code
 changes.

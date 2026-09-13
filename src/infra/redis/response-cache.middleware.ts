@@ -8,6 +8,7 @@ import {
 import type { BunRequest } from 'bun';
 import { CurrentUser } from '../../auth/services/current-user.service.js';
 import { AppConfigService } from '../../config/app.config.service.js';
+import { HEALTH_ROUTES } from '../../constants.js';
 import { NO_CACHE } from '../../core/decorators/no-cache.decorator.js';
 import { Cache } from '@dunx/infra/cache';
 
@@ -35,6 +36,7 @@ interface CachedResponse {
 export class ResponseCacheMiddleware implements Middleware {
   readonly #enabled: boolean;
   readonly #prefix: string;
+  readonly #healthPath: string;
 
   constructor(
     private readonly cache: Cache,
@@ -44,6 +46,7 @@ export class ResponseCacheMiddleware implements Middleware {
   ) {
     this.#enabled = config.get('isProd');
     this.#prefix = `${config.get('redis').prefix}:http`;
+    this.#healthPath = `/${config.get('app').prefix}/${HEALTH_ROUTES.BASE}`;
   }
 
   async handle(
@@ -61,6 +64,7 @@ export class ResponseCacheMiddleware implements Middleware {
     }
 
     const key = this.#key(req);
+    if (key === undefined) return next();
     const hit = await this.#read(key);
     if (hit !== undefined) {
       return new Response(hit.body, {
@@ -98,8 +102,17 @@ export class ResponseCacheMiddleware implements Middleware {
    * `SessionGuard` can return a different body per user, and a shared key would
    * serve one user's data to the next.
    */
-  #key(req: BunRequest): string {
+  /**
+   * `undefined` for a path that must never be cached.
+   *
+   * The health routes are `@dunx/http`'s controller now, so `@NoCache` cannot
+   * reach them - and a readiness probe answering a thirty-second-old `up` is the
+   * exact failure that decorator exists to prevent. The mount is read from the
+   * one constant the request logger and the CI probe also read.
+   */
+  #key(req: BunRequest): string | undefined {
     const { pathname, search } = new URL(req.url);
+    if (pathname.startsWith(this.#healthPath)) return undefined;
     const who = this.caller.optional()?.id ?? 'anonymous';
     return `${this.#prefix}:${who}:${pathname}${search}`;
   }

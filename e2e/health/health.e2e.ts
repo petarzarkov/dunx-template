@@ -1,25 +1,45 @@
 import { describe, expect, test } from 'bun:test';
 import { getTestContext } from '../setup/context.js';
 
+interface HealthReport {
+  status: string;
+  draining: boolean;
+  uptimeMs: number;
+  checks: { name: string; state: string; critical: boolean; detail?: string }[];
+}
+
 describe('service endpoints against a live server', () => {
-  test('liveness', async () => {
+  test('liveness asks nothing and answers up', async () => {
     const { api } = getTestContext();
-    const { status, body } = await api.json<{ uptimeSeconds: number }>(
-      'service/up',
-    );
+    const { status, body } = await api.json<HealthReport>('health/live');
     expect(status).toBe(200);
-    expect(body.uptimeSeconds).toBeGreaterThan(0);
+    expect(body.status).toBe('up');
+    expect(body.uptimeMs).toBeGreaterThan(0);
+    // A process that answers is alive; readiness is where the probes are.
+    expect(body.checks).toEqual([]);
   });
 
   test('readiness reports the real SQLite file up', async () => {
     const { api } = getTestContext();
-    const { status, body } = await api.json<{
-      status: string;
-      info: Record<string, { status: string }>;
-    }>('service/health');
+    const { status, body } = await api.json<HealthReport>('health/ready');
     expect(status).toBe(200);
-    expect(body.status).toBe('ok');
-    expect(body.info['db']?.status).toBe('up');
+    expect(body.status).toBe('up');
+    expect(body.checks.find((c) => c.name === 'database')?.state).toBe('up');
+  });
+
+  /**
+   * The whole point of `critical: false`, against a real server with no Redis
+   * and no broker: the checks report themselves down and readiness still passes,
+   * which is what the old `degraded` bucket meant.
+   */
+  test('a non-critical check can be down without failing readiness', async () => {
+    const { api } = getTestContext();
+    const { status, body } = await api.json<HealthReport>('health/ready');
+
+    expect(status).toBe(200);
+    for (const c of body.checks) {
+      if (c.state !== 'up') expect(c.critical).toBe(false);
+    }
   });
 
   /**
@@ -64,11 +84,11 @@ describe('service endpoints against a live server', () => {
    * `RequestLoggingMiddleware`, so a path listed in `requestLogging.ignore`
    * loses correlation as well as its log line - and so does everything the
    * handler logs, because the `AsyncLocalStorage` scope is never opened.
-   * `/service/up` and `/service/health` are both ignored here.
+   * `/health/live` and `/health/ready` are both ignored here.
    */
   test('KNOWN GAP: an ignored path gets no trace', async () => {
     const { api } = getTestContext();
-    const { headers } = await api.json('service/up');
+    const { headers } = await api.json('health/live');
     expect(headers.get('traceresponse')).toBeNull();
   });
 });

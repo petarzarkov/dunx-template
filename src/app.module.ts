@@ -14,7 +14,7 @@ import { AppCacheModule } from './infra/cache/cache.module.js';
 import { AppThrottleModule } from './infra/throttle/throttle.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
-import { HealthModule } from './infra/health/health.module.js';
+import { AppHealthModule } from './infra/health/health.module.js';
 import { ImagesConfigModule } from './infra/images/images.module.js';
 import { QueuesModule } from './infra/queue/queue.module.js';
 import { RedisCacheModule } from './infra/redis/redis.module.js';
@@ -139,7 +139,7 @@ export class AppModule {
         // After DatabaseModule, so better-auth reuses the connection it opened.
         AccountsModule,
         NotificationsModule.forRoot({ publisher: 'socket' }),
-        HealthModule,
+        AppHealthModule.forRoot(),
         UsersModule,
         FilesFeatureModule.forRoot(),
         AuditModule,

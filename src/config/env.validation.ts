@@ -2,6 +2,7 @@ import type { ConfigSource } from '@dunx/core';
 import { ConfigValidationError } from './config-validation.error.js';
 import { DEV_AUTH_SECRET } from './dto/auth-vars.dto.js';
 import { DbType } from './dto/db-vars.dto.js';
+import { AppEnv } from './dto/service-vars.dto.js';
 import { StorageDriver } from './dto/storage-vars.dto.js';
 import { envVarsSchema } from './env-vars.dto.js';
 import type { OAuthCredentials } from './app.config.js';
@@ -58,6 +59,14 @@ export const validateConfig = (env: ConfigSource) => {
     },
     service: {
       maxMemoryMb: vars.HEALTH_MAX_MEMORY_MB,
+      /**
+       * `?? (isLocal ? 0 : 5000)` rather than a plain default, because the right
+       * answer differs by environment and a single one is wrong in both: five
+       * seconds on every `bun run dev` restart, or no drain at all in
+       * production.
+       */
+      drainMs:
+        vars.HEALTH_DRAIN_MS ?? (vars.APP_ENV === AppEnv.LOCAL ? 0 : 5_000),
       commitSha: vars.SERVICE_COMMIT_SHA,
       commitMessage: vars.SERVICE_COMMIT_MESSAGE,
     },

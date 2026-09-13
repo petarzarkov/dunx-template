@@ -2,7 +2,7 @@ import { SessionGuard } from '@dunx/auth';
 import { DashboardMiddleware } from '@dunx/dashboard';
 import { ThrottleGuard } from '@dunx/http';
 import { RedisRelay, type HttpOptions } from '@dunx/http';
-import { SERVICE_ROUTES } from './constants.js';
+import { HEALTH_ROUTES } from './constants.js';
 import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
@@ -17,7 +17,7 @@ import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware
  * omission is silent.
  */
 export const httpOptions = (config: AppConfig): HttpOptions => {
-  const servicePath = `/${config.app.prefix}/${SERVICE_ROUTES.BASE}`;
+  const prefix = `/${config.app.prefix}`;
   return {
     /**
      * Outermost first, after the built-in request logger. `SessionGuard` leads
@@ -71,8 +71,8 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
       requestBody: config.log.requestBody,
       responseBody: config.log.responseBody,
       ignore: [
-        `${servicePath}/${SERVICE_ROUTES.LIVENESS}`,
-        `${servicePath}/${SERVICE_ROUTES.HEALTH}`,
+        `${prefix}/${HEALTH_ROUTES.LIVENESS}`,
+        `${prefix}/${HEALTH_ROUTES.READINESS}`,
       ],
     },
     websocket: { idleTimeout: 60 },

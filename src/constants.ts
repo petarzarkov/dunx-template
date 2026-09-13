@@ -8,9 +8,21 @@
  */
 export const SERVICE_ROUTES = Object.freeze({
   BASE: 'service',
-  HEALTH: 'health',
-  LIVENESS: 'up',
   CONFIG: 'config',
+} as const);
+
+/**
+ * Where `HealthModule` mounts, which this app does not choose: the controller is
+ * `@dunx/http`'s and declares `health/live` and `health/ready` itself.
+ *
+ * Named here anyway, because three other things have to agree with it - the
+ * paths `requestLogging` ignores, the CI probe and the e2e suite - and a string
+ * repeated in four places is the one that drifts.
+ */
+export const HEALTH_ROUTES = Object.freeze({
+  BASE: 'health',
+  LIVENESS: 'health/live',
+  READINESS: 'health/ready',
 } as const);
 
 /**

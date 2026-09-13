@@ -66,7 +66,7 @@ describe('the generated OpenAPI document', () => {
     expect(paths).toContain('/api/users/{userId}');
     expect(paths).toContain('/api/users/{userId}/ban');
     expect(paths).toContain('/api/audit-logs');
-    expect(paths).toContain('/api/service/health');
+    expect(paths).toContain('/api/health/ready');
     for (const path of paths) expect(path).toStartWith('/api/');
   });
 
@@ -135,7 +135,7 @@ describe('the generated OpenAPI document', () => {
     expect(listUsers?.['security']).toEqual([{ bearer: [] }]);
     expect(listUsers?.['x-required-roles']).toEqual(['admin', 'user']);
 
-    const health = doc.paths['/api/service/health']?.['get'];
+    const health = doc.paths['/api/health/ready']?.['get'];
     expect(health?.['security']).toEqual([]);
   });
 

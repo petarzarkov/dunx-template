@@ -14,7 +14,7 @@ import { httpOptions } from './http.options.js';
 import { forceExitAfter } from './core/force-exit.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { ReferenceMiddleware } from './core/middlewares/reference.middleware.js';
-import { SERVICE_ROUTES } from './constants.js';
+import { HEALTH_ROUTES } from './constants.js';
 
 /**
  * The config is validated here as well as inside `ConfigModule`, because
@@ -156,7 +156,7 @@ logger.info(`${appConfig.name} listening`, {
   env: appConfig.env,
   docs: `${url}${appConfig.prefix}/${boot.docs.path}`,
   openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
-  health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
+  health: `${url}${appConfig.prefix}/${HEALTH_ROUTES.READINESS}`,
   /**
    * `/ok`, not the bare mount.
    *
