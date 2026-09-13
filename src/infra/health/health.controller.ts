@@ -6,6 +6,7 @@ import { LocalStorage, Storage } from '@dunx/infra/files';
 import { Images } from '@dunx/infra/images';
 import { JobPublisher, QueueOptions } from '@dunx/infra/queue';
 import { AppConfigService } from '../../config/app.config.service.js';
+import { NoCache } from '../../core/decorators/no-cache.decorator.js';
 import { SERVICE_ROUTES } from '../../constants.js';
 import { QUEUES } from '../../notifications/events/events.js';
 import { CacheService } from '../redis/services/cache.service.js';
@@ -121,6 +122,11 @@ export class HealthController {
     tags: ['service'],
     summary: 'Readiness: every area, live or degraded',
   })
+  /**
+   * Never cached. A readiness probe answering a stale "ok" for thirty seconds
+   * after the database went away is worse than having no probe.
+   */
+  @NoCache()
   @Public()
   @Get(`/${SERVICE_ROUTES.HEALTH}`)
   async check(): Promise<Response> {
@@ -180,6 +186,7 @@ export class HealthController {
   }
 
   @ApiDoc({ tags: ['service'], summary: 'Liveness: is the process up' })
+  @NoCache()
   @Public()
   @Get(`/${SERVICE_ROUTES.LIVENESS}`)
   up(): { uptimeSeconds: number } {

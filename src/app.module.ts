@@ -17,6 +17,7 @@ import { HealthModule } from './infra/health/health.module.js';
 import { ImagesConfigModule } from './infra/images/images.module.js';
 import { QueuesModule } from './infra/queue/queue.module.js';
 import { RedisCacheModule } from './infra/redis/redis.module.js';
+import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
 import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { UsersModule } from './users/users.module.js';
@@ -162,6 +163,7 @@ export class AppModule {
       providers: [
         AuditContextMiddleware,
         ThrottleGuard,
+        ResponseCacheMiddleware,
         HomeMiddleware,
         DocsSessionMiddleware,
       ],

@@ -77,6 +77,7 @@ export const validateConfig = (env: ConfigSource) => {
       url: vars.REDIS_URL,
       connectTimeoutMs: vars.REDIS_CONNECT_TIMEOUT_MS,
       cacheTtlSeconds: vars.CACHE_TTL_SECONDS,
+      prefix: vars.CACHE_PREFIX,
     },
     throttle: {
       prefix: vars.THROTTLE_PREFIX,

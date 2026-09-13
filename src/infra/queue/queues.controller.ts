@@ -10,6 +10,7 @@ import {
 } from '@dunx/http';
 import { ApiDoc } from '@dunx/openapi';
 import { z } from 'zod';
+import { NoCache } from '../../core/decorators/no-cache.decorator.js';
 import { QUEUES } from '../../notifications/events/events.js';
 import { UserRole } from '../../users/schema/user.schema.js';
 
@@ -75,6 +76,8 @@ export class QueuesController {
     private readonly options: QueueOptions,
   ) {}
 
+  /** Live counts. A cached depth is a number that was true half a minute ago. */
+  @NoCache()
   @ApiDoc({ tags: ['queues'], summary: 'Job counts for every queue' })
   @Roles(UserRole.ADMIN)
   @Get('/')
@@ -118,6 +121,7 @@ export class QueuesController {
     };
   }
 
+  @NoCache()
   @ApiDoc({ tags: ['queues'], summary: 'One job: state, result, failure' })
   @Roles(UserRole.ADMIN)
   @Get('/:queue/jobs/:jobId', oneJob)

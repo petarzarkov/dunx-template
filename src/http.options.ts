@@ -6,6 +6,7 @@ import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
 import { DocsSessionMiddleware } from './core/middlewares/docs-session.middleware.js';
+import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
 import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 
 /**
@@ -42,6 +43,12 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
       DocsSessionMiddleware,
       SessionGuard,
       ThrottleGuard,
+      /**
+       * After `SessionGuard`, because the cache key includes the caller and only
+       * the guard ahead of it knows who that is. Before `AuditContextMiddleware`,
+       * because a served hit ran no handler and therefore wrote nothing to audit.
+       */
+      ResponseCacheMiddleware,
       AuditContextMiddleware,
     ],
     onError: errorMapper,

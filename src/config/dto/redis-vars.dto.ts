@@ -25,6 +25,8 @@ export const redisVarsSchema = z.object({
     .default(500),
 
   CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
+  /** Namespaces cached responses, so two deployments can share one Redis. */
+  CACHE_PREFIX: z.string().default('cache'),
 
   /**
    * Namespaces every counter key. Two deployments sharing one Redis need two
