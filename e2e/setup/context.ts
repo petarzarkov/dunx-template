@@ -129,7 +129,7 @@ const waitForReady = async (
 ): Promise<void> => {
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
-      const response = await fetch(`${url}/service/up`);
+      const response = await fetch(`${url}/health/live`);
       if (response.ok) return;
     } catch {
       // not listening yet
@@ -173,7 +173,7 @@ const drain = (
  * helper three files away. The port is the actual problem, so it says so.
  */
 const assertPortFree = async (url: string): Promise<void> => {
-  const reachable = await fetch(`${url}/service/up`)
+  const reachable = await fetch(`${url}/health/live`)
     .then((response) => response.ok)
     .catch(() => false);
   if (!reachable) return;

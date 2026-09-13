@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { amqpVarsSchema } from './dto/amqp-vars.dto.js';
 import { authVarsSchema } from './dto/auth-vars.dto.js';
 import { dbVarsSchema, DbType } from './dto/db-vars.dto.js';
 import { notificationVarsSchema } from './dto/notification-vars.dto.js';
@@ -19,6 +20,7 @@ export const envVarsSchema = z
     ...storageVarsSchema.shape,
     ...authVarsSchema.shape,
     ...notificationVarsSchema.shape,
+    ...amqpVarsSchema.shape,
   })
   .superRefine((vars, ctx) => {
     if (vars.DB_TYPE === DbType.POSTGRES && vars.POSTGRES_URL === undefined) {

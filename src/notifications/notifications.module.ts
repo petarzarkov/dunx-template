@@ -6,7 +6,6 @@ import {
   WsRelayModule,
   type RedisRelayOptions,
 } from '@dunx/http';
-import { HttpModule } from '@dunx/http/client';
 import { AccountsModule } from '../auth/auth.module.js';
 import { AppConfigService } from '../config/app.config.service.js';
 import {
@@ -14,9 +13,14 @@ import {
   SocketPublisher,
   WorkerPublisher,
 } from './events/events.publisher.js';
+import { AppEmailModule } from './email/email.module.js';
+import {
+  AnnounceRegistration,
+  QueueWelcomeEmail,
+} from './events/registration.subscribers.js';
 import { EventsGateway } from './events/events.gateway.js';
+import { FeedController } from './events/feed.controller.js';
 import { NotificationJobs } from './handlers/notification.jobs.js';
-import { EmailService } from './services/email.service.js';
 
 export interface NotificationsModuleOptions {
   /**
@@ -99,30 +103,30 @@ export class NotificationsModule {
             ]
           : []),
         /**
-         * The outbound client `EmailService` posts through.
-         *
-         * Unnamed, so it binds `HttpService` itself and a service injects that class
-         * like any other dependency. `HttpModule` also supports naming a client -
-         * `forRootAsync(config, 'email')` binds `httpClient('email')`, a `Token`
-         * rather than a class, reached with `inject()` in a field initialiser because
-         * a token has no type name for `@dunx/transform` to record. That exists for
-         * an app calling several upstreams, and this app calls one. Using it here
-         * bought nothing and cost the plain constructor.
-         *
-         * `forRootAsync` because the timeout comes off validated config, which is the
-         * one thing a zero-argument `forRoot` cannot read.
+         * `EmailService`, its transport and its renderer. Both processes bind it:
+         * the worker is what actually sends, and the web process has it for a
+         * send on the request path.
          */
-        HttpModule.forRootAsync({
-          useFactory: (config: AppConfigService) => ({
-            timeoutMs: config.get('email').timeoutMs,
-            headers: { 'content-type': 'application/json' },
-          }),
-          inject: [AppConfigService] as const,
-        }),
+        AppEmailModule.forRoot(),
       ],
+      // The SSE feed is a route, so only where there is a server to serve it.
+      ...(options.publisher === 'socket'
+        ? { controllers: [FeedController] }
+        : {}),
       providers: [
-        EmailService,
         NotificationJobs,
+        /**
+         * The two reactions to `UserRegistered`. They are listed here rather
+         * than registered anywhere: `EventRegistry` walks the prototypes of the
+         * classes the modules already declare, so `providers` is the whole of
+         * it - the same marker-plus-scan `@JobHandler` and the routes use.
+         *
+         * In both processes: the web one publishes the event from better-auth's
+         * hook, and the worker is where a handler would run if it ever emitted
+         * one of its own.
+         */
+        QueueWelcomeEmail,
+        AnnounceRegistration,
         publisher,
         // The gateway only exists where there is a server to upgrade on.
         ...(options.publisher === 'socket' ? [EventsGateway] : []),

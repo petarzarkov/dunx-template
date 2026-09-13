@@ -25,6 +25,9 @@ const source = {
   QUEUE_PREFIX: `test-${crypto.randomUUID()}`,
   THROTTLE_PREFIX: `test-${crypto.randomUUID()}`,
   THROTTLE_LIMIT: '10000',
+  // Outside `local` the drain is 5s, and a suite closing a server per file
+  // pays it. See petarzarkov/dunx#146.
+  HEALTH_DRAIN_MS: '0',
   CACHE_PREFIX: `test-${crypto.randomUUID()}`,
   SEED_ADMIN_EMAIL: 'admin@local.dev',
   SEED_ADMIN_PASSWORD: 'admin-password',
@@ -132,7 +135,7 @@ describe('the response cache in production', () => {
 
   test.skipIf(!cacheUp)('@NoCache keeps a route live', async () => {
     for (const _ of [1, 2]) {
-      const response = await server.request('api/service/health');
+      const response = await server.request('api/health/ready');
       expect(response.headers.get('x-cache')).toBeNull();
     }
   });
@@ -158,7 +161,7 @@ describe('the response cache in production', () => {
    * request, and that is the same contract every other Redis consumer here has.
    */
   test('an unreachable cache serves the request live', async () => {
-    const response = await server.request('api/service/up');
+    const response = await server.request('api/health/live');
     expect(response.status).toBe(200);
   });
 });

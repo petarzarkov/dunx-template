@@ -27,6 +27,20 @@ export class QueuesModule {
         return {
           ...(url === undefined ? {} : { url }),
           prefix: queue.prefix,
+          /**
+           * Where bullmq forks for a queue carrying a `background` handler.
+           * Absolute, because bullmq resolves it in the child and a relative
+           * specifier finds nothing there.
+           *
+           * A fork rather than a thread: a fork reads `bunfig.toml`, so
+           * `@dunx/transform/preload` runs over the `.ts` files it loads. A
+           * thread enters through bullmq's prebuilt `main-worker.js`, where the
+           * preload never matches and no provider gets its constructor types.
+           */
+          processor: new URL(
+            '../../files/handlers/media.processor.ts',
+            import.meta.url,
+          ).pathname,
           // `maxRetries: 0` is what makes an enqueue against a down Redis
           // answer in milliseconds instead of hanging, and what lets the
           // process exit. It is also `@dunx/infra/queue`'s own default; it is

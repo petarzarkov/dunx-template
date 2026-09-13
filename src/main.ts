@@ -1,5 +1,5 @@
 import { Logger } from '@dunx/core';
-import { HttpFactory, StaticFiles } from '@dunx/http';
+import { Compression, HttpFactory, StaticFiles } from '@dunx/http';
 import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
 import { SwaggerRenderer } from '@dunx/openapi/swagger';
 import { AppModule } from './app.module.js';
@@ -14,7 +14,7 @@ import { httpOptions } from './http.options.js';
 import { forceExitAfter } from './core/force-exit.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { ReferenceMiddleware } from './core/middlewares/reference.middleware.js';
-import { SERVICE_ROUTES } from './constants.js';
+import { HEALTH_ROUTES } from './constants.js';
 
 /**
  * The config is validated here as well as inside `ConfigModule`, because
@@ -135,7 +135,13 @@ app.enableCors({ origin: cors.origin, credentials: config.get('isProd') });
  * class self-binds into the scope that asks first, and `app.use` asks from the
  * app root, which is the one scope where the explorer is visible.
  */
-app.use(StaticFiles, HomeMiddleware, ReferenceMiddleware);
+/**
+ * Compression first of these, so it wraps the responses the three below produce:
+ * the chat page, the explorer shell and Scalar's bundle are all text and all
+ * worth compressing, and a `Response` is only compressed by a middleware that
+ * sees it on the way out.
+ */
+app.use(Compression, StaticFiles, HomeMiddleware, ReferenceMiddleware);
 
 app.enableShutdownHooks();
 const cancelWatchdog = forceExitAfter();
@@ -156,7 +162,7 @@ logger.info(`${appConfig.name} listening`, {
   env: appConfig.env,
   docs: `${url}${appConfig.prefix}/${boot.docs.path}`,
   openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
-  health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
+  health: `${url}${appConfig.prefix}/${HEALTH_ROUTES.READINESS}`,
   /**
    * `/ok`, not the bare mount.
    *

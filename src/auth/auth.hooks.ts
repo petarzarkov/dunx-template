@@ -1,7 +1,9 @@
 import { Logger } from '@dunx/core';
+import { EventBus } from '@dunx/core';
 import { JobPublisher } from '@dunx/infra/queue';
 import type { BetterAuthOptions } from 'better-auth';
 import { JOBS, QUEUES } from '../notifications/events/events.js';
+import { UserRegistered } from '../notifications/events/app-events.js';
 
 /**
  * Publish `user.password_reset` when better-auth mints a reset link.
@@ -37,25 +39,28 @@ export const passwordResetSender =
  * hook fires for every path into the table, where a call site in one service would
  * only cover the one it is in.
  *
- * The enqueue is wrapped, because a `databaseHooks.after` that throws fails the
- * sign-up. An unreachable queue must not stop a user registering - the welcome
+ * It states a fact and publishes nothing itself. This used to enqueue the
+ * welcome job directly, which meant the auth layer named the notifications
+ * layer and a second reaction meant editing this file. `UserRegistered` on the
+ * bus is what replaced that: the subscribers are in their own modules, and
+ * adding a third is a new class rather than an edit here.
+ *
+ * The emit is wrapped, because a `databaseHooks.after` that throws fails the
+ * sign-up. `emit` awaits every subscriber, so a queue that is down surfaces
+ * here - and an unreachable queue must not stop a user registering. The welcome
  * email is the part that degrades, not the account.
  */
 export const registrationHooks = (
-  publisher: JobPublisher,
+  bus: EventBus,
   logger: Logger,
 ): BetterAuthOptions['databaseHooks'] => ({
   user: {
     create: {
       after: async (user) => {
         try {
-          await publisher.publish(QUEUES.NOTIFICATIONS, JOBS.USER_REGISTERED, {
-            userId: user.id,
-            email: user.email,
-            name: user.name,
-          });
+          await bus.emit(new UserRegistered(user.id, user.email, user.name));
         } catch (error) {
-          logger.warn('welcome notification not queued', {
+          logger.warn('a user.registered subscriber failed', {
             userId: user.id,
             reason: (error as Error).message,
           });

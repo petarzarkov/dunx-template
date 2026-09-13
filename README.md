@@ -20,7 +20,7 @@ an outbound HTTP client with retries, and **Redis** caching and rate limiting.
 **None of it is required to be running.** An area whose service is absent reports
 that it is skipping and the app boots anyway: `bun run start`, `bun test` and
 `bun run test:e2e` all pass with nothing installed, and exercise the real thing
-when it is up. `/api/service/health` says which is which.
+when it is up. `/api/health/ready` says which is which.
 
 `MAPPING.md` is the NestJS-to-dunx concept table, including the one thing it listed as
 unportable that turned out not to be, and the one that came back and left again.
@@ -37,7 +37,7 @@ bun run start
 
 ```
 http://localhost:3001/                  the chat client, over the gateway below
-http://localhost:3001/api/service/health
+http://localhost:3001/api/health/ready
 http://localhost:3001/api/docs          Swagger UI, served at runtime
 http://localhost:3001/api/public        Scalar, over the same document
 http://localhost:3001/api/openapi.json  the document, served at runtime
@@ -79,7 +79,7 @@ bun run worker                # the consumer, in a second terminal
 **`REDIS_URL` is not needed for a local broker.** `Bun.RedisClient` resolves
 `$VALKEY_URL`, then `$REDIS_URL`, then `valkey://localhost:6379` on its own, so a
 container published on the default port is found with the variable left commented out
-in `.env` - which is why `/api/service/health` moves every area to `up` without it.
+in `.env` - which is why `/api/health/ready` moves every area to `up` without it.
 Set it when the broker is somewhere else:
 
 ```bash
@@ -93,10 +93,13 @@ behind a profile, so a plain `up` is Redis on its own:
 
 ```bash
 docker compose --profile s3 up -d                     # valkey, minio, and a bucket
+docker compose --profile mail up -d                   # mailpit, at localhost:8025
+docker compose --profile amqp up -d                   # rabbitmq, at localhost:15672
 ```
 
 The cache, the rate limiter, the queue and websocket fan-out across nodes all go
-live, and `/api/service/health` moves those areas from `degraded` to `up`. Set
+live, and `/api/health/ready` moves those checks from `down` to `up`. They are
+`critical: false`, which is why the probe passes either way. Set
 `STORAGE_DRIVER=s3` with the five `S3_*` variables to put uploads in MinIO
 instead of on disk - the backend is one `StorageOptions` subclass and no code
 changes.
@@ -297,10 +300,11 @@ Four cross-field rules exist because a single field's validator cannot see them:
 secret: the development fallback is a constant in this repository, and anyone
 holding it can mint a session.
 
-`REDIS_URL` is optional everywhere. Absent, the cache reports itself degraded,
-the rate limiter stops counting rather than refusing every request, the queue
-routes answer 503 in single-digit milliseconds and websocket fan-out stays local
-to the process. The one thing that does **not** degrade is
+`REDIS_URL` is optional everywhere. Absent, the cache serves every read live,
+the rate limiter counts in memory so the budget is per replica rather than
+absent, the queue routes answer 503 in single-digit milliseconds and websocket
+fan-out stays local to the process. `AMQP_URL` is the same: unset, the domain
+publisher warns once and does nothing. The one thing that does **not** degrade is
 `AUTH_SESSION_STORE=redis`, which is why it is an explicit opt-in: a swallowed
 `null` from a session read would sign every user out.
 

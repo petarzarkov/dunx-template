@@ -14,6 +14,7 @@ import { AppConfigService } from '../../config/app.config.service.js';
 import { DbType } from '../../config/dto/db-vars.dto.js';
 import * as schema from './schema.js';
 import { applyAuditTriggers } from './triggers.js';
+import { SQLITE_PRAGMAS } from './pragmas.js';
 
 export const MIGRATIONS_FOLDER = join(import.meta.dir, 'migrations');
 
@@ -81,7 +82,7 @@ export class DatabaseModule {
         return new SyncSqliteOptions({
           schema,
           filename: settings.sqlitePath,
-          pragmas: ['journal_mode = WAL', 'foreign_keys = ON'],
+          pragmas: SQLITE_PRAGMAS,
         });
       },
       inject: [AppConfigService] as const,

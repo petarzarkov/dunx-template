@@ -4,7 +4,8 @@ import { AppModule } from '../../app.module.js';
 import { validateConfig } from '../../config/env.validation.js';
 import { httpOptions } from '../../http.options.js';
 import { bearer, signIn } from '../../test-support/session.js';
-import { CacheService } from './services/cache.service.js';
+import { Cache } from '@dunx/infra/cache';
+import { DegradingCacheStore } from '../cache/degrading-store.js';
 
 /**
  * The Redis-backed areas, in both states.
@@ -49,6 +50,21 @@ const redisUp = async (): Promise<boolean> => {
   }
 };
 
+/**
+ * The readiness envelope, which is `@dunx/http`'s rather than this app's: one
+ * flat list, each entry carrying its own `critical`. The old shape partitioned
+ * into `info` and `degraded`; `critical: false` says the same thing per check.
+ */
+interface HealthReport {
+  status: string;
+  draining: boolean;
+  uptimeMs: number;
+  checks: { name: string; state: string; critical: boolean; detail?: string }[];
+}
+
+const check = (report: HealthReport, name: string) =>
+  report.checks.find((c) => c.name === name);
+
 describe('with a broker that will not answer', () => {
   let server: TestServer;
   let token: string;
@@ -70,15 +86,16 @@ describe('with a broker that will not answer', () => {
   });
 
   test('health reports the cache and the queue degraded, and still passes', async () => {
-    const { status, body } = await server.json<{
-      status: string;
-      degraded: Record<string, { status: string }>;
-    }>('api/service/health');
+    const { status, body } =
+      await server.json<HealthReport>('api/health/ready');
 
     expect(status).toBe(200);
-    expect(body.status).toBe('ok');
-    expect(body.degraded['cache']?.status).toBe('degraded');
-    expect(body.degraded['queue']?.status).toBe('degraded');
+    // `up` overall with two checks down, because neither is critical: a cache
+    // and a queue that are unreachable are not reasons to shed traffic.
+    expect(body.status).toBe('up');
+    expect(check(body, 'cache')?.state).toBe('down');
+    expect(check(body, 'queue')?.state).toBe('down');
+    expect(check(body, 'cache')?.critical).toBe(false);
   });
 
   test('the queue routes answer 503 rather than hanging', async () => {
@@ -96,21 +113,34 @@ describe('with a broker that will not answer', () => {
   });
 
   /**
-   * The rate limiter fails **open**. `THROTTLE_LIMIT` is 1 here, so with a
-   * reachable counter the second call would be a 429 - refusing every request
-   * because the limiter is down would turn a degraded cache into an outage.
+   * The rate limiter falls back to an **in-process counter**, which is a change
+   * from the hand-rolled guard this replaced: that one failed open, so a
+   * deployment with a broken Redis had no rate limiting at all and said nothing
+   * about it. Counting in memory means the budget is per replica rather than
+   * absent, and the boot log says which one is in use.
+   *
+   * `THROTTLE_LIMIT` is 1 here, so the second call is the one that proves a
+   * counter exists.
    */
-  test('the throttler stops counting instead of refusing', async () => {
-    for (const _ of [1, 2, 3]) {
-      const { status } = await server.json('api/profile', {
-        headers: bearer(token),
-      });
-      expect(status).toBe(200);
-    }
+  test('the throttler counts in memory when the broker is gone', async () => {
+    const first = await server.json('api/profile', { headers: bearer(token) });
+    expect(first.status).toBe(200);
+
+    const second = await server.json('api/profile', { headers: bearer(token) });
+    expect(second.status).toBe(429);
+    // The framework guard reports the budget, which the hand-rolled one did not.
+    expect(second.headers.get('retry-after')).not.toBeNull();
   });
 
+  /**
+   * The contract the whole template rests on, at the one seam that has to hold
+   * it: `Cache.wrap` throws out of an unreachable `RedisCacheStore`, so
+   * `DegradingCacheStore` turns that into a miss and the value is computed.
+   * Without it every cached route 500s on a machine with no Redis.
+   */
   test('the cache reads through to the computed value', async () => {
-    const cache = server.app.get(CacheService);
+    const cache = server.app.get(Cache);
+    const store = server.app.get(DegradingCacheStore);
     let computed = 0;
     const value = await cache.wrap('spec:key', () => {
       computed += 1;
@@ -119,7 +149,24 @@ describe('with a broker that will not answer', () => {
 
     expect(value).toBe('fresh');
     expect(computed).toBe(1);
-    expect((await cache.status()).reachable).toBe(false);
+    expect(store.reachability.reachable).toBe(false);
+  });
+
+  /**
+   * And the L1 half: with the backend gone the tier still answers from memory,
+   * so a hot key costs one recompute per process rather than one per request.
+   */
+  test('a second read is served from L1 even with the backend gone', async () => {
+    const cache = server.app.get(Cache);
+    let computed = 0;
+    const compute = () => {
+      computed += 1;
+      return 'fresh';
+    };
+
+    await cache.wrap('spec:l1', compute);
+    await cache.wrap('spec:l1', compute);
+    expect(computed).toBe(1);
   });
 });
 
@@ -141,20 +188,23 @@ describe('with a live broker', () => {
 
   test('the cache round trips a value with a TTL', async () => {
     if (!live) return;
-    const cache = (server as TestServer).app.get(CacheService);
+    const cache = (server as TestServer).app.get(Cache);
     const key = `spec:${crypto.randomUUID()}`;
 
-    await cache.set(key, { hello: 'world' }, 30);
+    // Milliseconds, not seconds: the framework's unit throughout, and the one
+    // thing that changes shape when an app moves off a Redis-native TTL.
+    await cache.set(key, { hello: 'world' }, 30_000);
     expect(await cache.get<{ hello: string }>(key)).toEqual({
       hello: 'world',
     });
-    expect(await cache.del(key)).toBe(1);
+    // A boolean, where a Redis DEL answered a count.
+    expect(await cache.del(key)).toBe(true);
     expect(await cache.get(key)).toBeUndefined();
   });
 
   test('wrap computes once and serves the second call from the cache', async () => {
     if (!live) return;
-    const cache = (server as TestServer).app.get(CacheService);
+    const cache = (server as TestServer).app.get(Cache);
     const key = `spec:${crypto.randomUUID()}`;
     let computed = 0;
     const compute = () => {
@@ -162,8 +212,8 @@ describe('with a live broker', () => {
       return { n: 42 };
     };
 
-    expect(await cache.wrap(key, compute, 30)).toEqual({ n: 42 });
-    expect(await cache.wrap(key, compute, 30)).toEqual({ n: 42 });
+    expect(await cache.wrap(key, compute, 30_000)).toEqual({ n: 42 });
+    expect(await cache.wrap(key, compute, 30_000)).toEqual({ n: 42 });
     expect(computed).toBe(1);
     await cache.del(key);
   });
@@ -182,9 +232,9 @@ describe('with a live broker', () => {
 
   test('health reports the cache live', async () => {
     if (!live) return;
-    const { body } = await (server as TestServer).json<{
-      info: Record<string, { status: string }>;
-    }>('api/service/health');
-    expect(body.info['cache']?.status).toBe('up');
+    const { body } = await (server as TestServer).json<HealthReport>(
+      'api/health/ready',
+    );
+    expect(check(body, 'cache')?.state).toBe('up');
   });
 });
