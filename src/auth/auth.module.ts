@@ -15,6 +15,7 @@ import { registrationHooks } from './auth.hooks.js';
 import { AUTH_MOUNT, baseAuthOptions } from './auth.options.js';
 import { ProfileController } from './profile.controller.js';
 import { AuthAdminSeeder } from './services/auth-admin.seeder.js';
+import { SessionSweeper } from './services/session-sweeper.service.js';
 import { CurrentUser } from './services/current-user.service.js';
 
 /**
@@ -105,7 +106,7 @@ const auth = AuthModule.forRootAsync(
 @Module({
   imports: [AuditModule, auth],
   controllers: [ProfileController],
-  providers: [CurrentUser, AuthAdminSeeder],
+  providers: [CurrentUser, AuthAdminSeeder, SessionSweeper],
   /**
    * `AuthModule` re-exported by reference, so an importer sees `Auth`,
    * `AuthContext` and `SessionGuard` without naming any of them. `CurrentUser` is

@@ -1,6 +1,7 @@
 import type { ConfigSource, DynamicModule, ModuleRef } from '@dunx/core';
 import { StaticModule } from '@dunx/http';
 import { LoggerModule } from '@dunx/infra/logger';
+import { ScheduleModule } from '@dunx/infra/schedule';
 import { AccountsModule } from './auth/auth.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AppConfigModule } from './config/app.config.module.js';
@@ -101,6 +102,17 @@ export class AppModule {
       imports: [
         ...foundation(options),
         QueuesModule.forRoot(),
+        /**
+         * Arms every `@Cron` in the graph. Web process only: the sweeper lives in
+         * `AccountsModule`, which a worker does not import, and an in-process
+         * scheduler in both would simply run each schedule twice.
+         */
+        ScheduleModule.forRootAsync({
+          useFactory: (config: AppConfigService) => ({
+            tz: config.get('app').timezone,
+          }),
+          inject: [AppConfigService] as const,
+        }),
         // After QueuesModule: the board reads the publisher's own queues.
         AppDashboardModule.forRoot(),
         /**
