@@ -65,8 +65,16 @@ export class FilesService {
    * row is a leak a sweep can find, while a row with no object is a 404 every
    * client sees.
    */
-  async upload(userId: string, input: UploadBody): Promise<FileMetadata> {
-    const { file, context } = input;
+  /**
+   * Size, floor, filename and content type, against validated config.
+   *
+   * The floor and the filename rule were two `FileValidator` subclasses in the
+   * NestJS template, wired through `@ValidatedFiles`. They are plain checks here
+   * rather than decorator arguments, which is the same move the size and type
+   * checks already made - and being a method is what lets a batch check every
+   * part before it writes the first.
+   */
+  private validate(file: File): void {
     const limits = this.config.get('storage');
 
     if (file.size > limits.maxBytes) {
@@ -75,12 +83,6 @@ export class FilesService {
         `File is ${file.size} bytes, the limit is ${limits.maxBytes}`,
       );
     }
-    /**
-     * The floor and the filename rule were two `FileValidator` subclasses in the
-     * NestJS template, wired through `@ValidatedFiles`. They are plain checks
-     * here, against validated config rather than decorator arguments, which is
-     * the same move the type and size checks above already made.
-     */
     if (file.size < limits.minBytes) {
       throw new HttpError(
         HttpStatusCode.BAD_REQUEST,
@@ -99,6 +101,38 @@ export class FilesService {
         `Content type "${file.type}" is not accepted. Allowed: ${limits.allowedTypes.join(', ')}`,
       );
     }
+  }
+
+  /**
+   * Several at once, validated before anything is written.
+   *
+   * Two passes on purpose. Uploading each one as it is checked would leave the
+   * first three objects stored and the fourth rejected, which is a partial batch
+   * the caller has no way to undo. Checking all of them first makes the common
+   * failure - one file too large, one type not allowed - a clean 4xx with
+   * nothing persisted.
+   *
+   * Sequential rather than `Promise.all`: a batch is at most six files and the
+   * storage backend may be one disk, so the concurrency buys nothing and makes
+   * the failure harder to attribute.
+   */
+  async uploadMany(
+    userId: string,
+    files: readonly File[],
+    context: string,
+  ): Promise<FileMetadata[]> {
+    for (const file of files) this.validate(file);
+
+    const uploaded: FileMetadata[] = [];
+    for (const file of files) {
+      uploaded.push(await this.upload(userId, { file, context }));
+    }
+    return uploaded;
+  }
+
+  async upload(userId: string, input: UploadBody): Promise<FileMetadata> {
+    const { file, context } = input;
+    this.validate(file);
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     const dimensions = await this.thumbnails.dimensions(bytes);

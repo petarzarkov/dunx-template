@@ -11,6 +11,7 @@ import {
   listFiles,
   oneFile,
   uploadFile,
+  uploadFiles,
   type FileMetadata,
 } from './dto/file.dto.js';
 import { FilesService } from './services/files.service.js';
@@ -61,6 +62,19 @@ export class FilesController {
   @Post('/', uploadFile)
   upload(input: Input<typeof uploadFile>): Promise<FileMetadata> {
     return this.files.upload(this.caller.require().id, input.body);
+  }
+
+  /**
+   * The batch form. Each file is validated and written independently, so one
+   * rejected part fails the request rather than leaving the rest half stored -
+   * `FilesService.uploadMany` does the checks before it writes anything.
+   */
+  @ApiDoc({ tags: ['files'], summary: 'Upload several objects at once' })
+  @Roles(UserRole.ADMIN, UserRole.USER)
+  @Post('/batch', uploadFiles)
+  uploadMany(input: Input<typeof uploadFiles>): Promise<FileMetadata[]> {
+    const { files, context } = input.body;
+    return this.files.uploadMany(this.caller.require().id, files, context);
   }
 
   @ApiDoc({ tags: ['files'], summary: 'One object, without its bytes' })

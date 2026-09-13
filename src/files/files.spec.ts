@@ -8,6 +8,7 @@ import { AppModule } from '../app.module.js';
 import { validateConfig } from '../config/env.validation.js';
 import { httpOptions } from '../http.options.js';
 import { bearer, signIn, signUp } from '../test-support/session.js';
+import { MAX_FILES } from './dto/file.dto.js';
 import type { FileMetadata } from './dto/file.dto.js';
 
 /**
@@ -139,6 +140,66 @@ describe('multipart upload', () => {
     );
     const { status } = await upload(short, adminToken);
     expect(status).toBe(400);
+  });
+
+  describe('batch upload', () => {
+    const many = async (files: File[], token: string) => {
+      const form = new FormData();
+      for (const file of files) form.append('files', file);
+      form.set('context', 'uploads');
+      return server.json<FileMetadata[]>('api/files/batch', {
+        method: 'POST',
+        headers: bearer(token),
+        body: form,
+      });
+    };
+
+    test('several files in one request all land', async () => {
+      const { status, body } = await many([png(), png(), png()], adminToken);
+      expect(status).toBe(201);
+      expect(body).toHaveLength(3);
+      for (const file of body) expect(file.id).toBeString();
+    });
+
+    /**
+     * `grouped()` leaves a single occurrence scalar rather than wrapping it, so
+     * the one-file case goes down a different branch of the schema than the
+     * many-file case and is worth its own assertion.
+     */
+    test('one file through the batch route still returns a list', async () => {
+      const { status, body } = await many([png()], adminToken);
+      expect(status).toBe(201);
+      expect(body).toHaveLength(1);
+    });
+
+    test('more than the cap is refused by the schema', async () => {
+      const { status } = await many(
+        Array.from({ length: MAX_FILES + 1 }, () => png()),
+        adminToken,
+      );
+      expect(status).toBe(400);
+    });
+
+    /**
+     * The whole reason validation runs as its own pass before any write: a
+     * rejected part must not leave the parts before it stored.
+     */
+    test('one bad file rejects the batch and stores none of it', async () => {
+      const before = await server.json<{ data: unknown[] }>('api/files', {
+        headers: bearer(adminToken),
+      });
+
+      const exe = new File(['MZ'], 'thing.exe', {
+        type: 'application/x-msdownload',
+      });
+      const { status } = await many([png(), exe, png()], adminToken);
+      expect(status).toBe(415);
+
+      const after = await server.json<{ data: unknown[] }>('api/files', {
+        headers: bearer(adminToken),
+      });
+      expect(after.body.data).toHaveLength(before.body.data.length);
+    });
   });
 
   test('a JSON body against a multipart route is a 400 from the schema', async () => {

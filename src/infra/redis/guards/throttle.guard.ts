@@ -10,7 +10,10 @@ import {
 import type { BunRequest } from 'bun';
 import { CurrentUser } from '../../../auth/services/current-user.service.js';
 import { AppConfigService } from '../../../config/app.config.service.js';
-import { THROTTLE } from '../../../core/decorators/throttle.decorator.js';
+import {
+  THROTTLE,
+  windowFor,
+} from '../../../core/decorators/throttle.decorator.js';
 import { RedisConnection } from '@dunx/infra/redis';
 
 /**
@@ -49,15 +52,29 @@ export class ThrottleGuard implements Middleware {
   ): Promise<Response> {
     const throttle = this.config.get('throttle');
     const limit = ctx.get(THROTTLE) ?? throttle;
+
+    /**
+     * A route may declare one window per environment, so resolve it before the
+     * key is built. `undefined` is a deliberate opt-out for this environment -
+     * an expensive route that is limited in production and unthrottled while
+     * the page calling it is being written.
+     */
+    const windowSeconds = windowFor(
+      limit.windowSeconds,
+      this.config.get('app').env,
+      throttle.windowSeconds,
+    );
+    if (windowSeconds === undefined) return next();
+
     const key = `${throttle.prefix}:throttle:${ctx.controller}:${ctx.handler}:${this.subject(req)}`;
 
-    const used = await this.count(key, limit.windowSeconds);
+    const used = await this.count(key, windowSeconds);
     if (used === undefined) return next();
 
     if (used > limit.limit) {
       throw new HttpError(
         HttpStatusCode.TOO_MANY_REQUESTS,
-        `Rate limit exceeded: ${limit.limit} requests per ${limit.windowSeconds}s`,
+        `Rate limit exceeded: ${limit.limit} requests per ${windowSeconds}s`,
       );
     }
     return next();

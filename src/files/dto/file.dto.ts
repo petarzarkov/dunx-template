@@ -48,6 +48,32 @@ export const UploadBody = z.object({
 
 export type UploadBody = z.infer<typeof UploadBody>;
 
+/** Bun's own cap on how many parts one batch may carry. */
+export const MAX_FILES = 6;
+
+/**
+ * The batch form of {@link UploadBody}.
+ *
+ * `grouped()` in `@dunx/http` turns a repeated field into an array and leaves a
+ * single occurrence scalar, so `files` is a `File` when one was sent and a
+ * `File[]` when several were. The union plus the transform is what makes both
+ * reach the handler as a list, rather than the handler testing `Array.isArray`.
+ */
+export const UploadManyBody = z.object({
+  files: z
+    .union([z.instanceof(File), z.array(z.instanceof(File))])
+    .transform((value) => (Array.isArray(value) ? value : [value]))
+    .refine((files) => files.length > 0 && files.length <= MAX_FILES, {
+      message: `between 1 and ${MAX_FILES} files`,
+    }),
+  context: z
+    .string()
+    .regex(/^[a-z0-9-]{1,32}$/)
+    .default('uploads'),
+});
+
+export type UploadManyBody = z.infer<typeof UploadManyBody>;
+
 /** What a presigned link answers with. Shared so the response can name it. */
 export const FileLink = z
   .object({ url: z.string(), expiresIn: z.number().int() })
@@ -57,6 +83,12 @@ export const uploadFile = {
   body: UploadBody,
   status: 201,
   response: { 201: FileMetadata },
+} as const satisfies RouteSchemas;
+
+export const uploadFiles = {
+  body: UploadManyBody,
+  status: 201,
+  response: { 201: z.array(FileMetadata) },
 } as const satisfies RouteSchemas;
 
 export const listFiles = {
