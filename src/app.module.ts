@@ -7,7 +7,6 @@ import { AuditModule } from './audit/audit.module.js';
 import { AppConfigModule } from './config/app.config.module.js';
 import { AppConfigService } from './config/app.config.service.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
-import { DocsSessionMiddleware } from './core/middlewares/docs-session.middleware.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { FilesFeatureModule } from './files/files.module.js';
 import { AppDashboardModule } from './infra/dashboard/dashboard.module.js';
@@ -165,7 +164,6 @@ export class AppModule {
         ThrottleGuard,
         ResponseCacheMiddleware,
         HomeMiddleware,
-        DocsSessionMiddleware,
       ],
     };
   }

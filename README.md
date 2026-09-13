@@ -46,8 +46,11 @@ http://localhost:3001/api/queues        queue depth and job inspection, admin on
 ws://localhost:3001/ws
 ```
 
-Outside `APP_ENV=local` the two explorers and the document ask for a session
-first, and the dashboard answers 404 to anyone who is not an admin.
+Outside `APP_ENV=local` the two explorers, the document and the explorers' own
+assets ask for a session first, and the dashboard answers 404 to anyone who is
+not an admin. One `Authorize` decides all of it: `OpenApiModule` and
+`DashboardModule` each take one, and `ReferenceMiddleware` runs the same function
+through `gate()`.
 
 Nothing else is needed: the migrations, the audit triggers and the first
 administrator are all applied at boot. Every route but the health probes and

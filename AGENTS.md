@@ -67,10 +67,16 @@ marker should.
 ## Middleware order
 
 `httpOptions.middleware` runs before anything `app.use` appends, and the order in
-that array is the order they run. Two entries are ahead of `SessionGuard` on
-purpose: `DashboardMiddleware` and `DocsSessionMiddleware` both do their own
-authorization against better-auth, and behind the guard the dashboard's polling
-would also be counted by `ThrottleGuard` against a single key.
+that array is the order they run. `DashboardMiddleware` is ahead of
+`SessionGuard` on purpose: it does its own authorization against better-auth, and
+behind the guard its polling would also be counted by `ThrottleGuard` against a
+single key.
+
+The documentation is not gated by a middleware at all. `OpenApiModule` and
+`DashboardModule` each take an `Authorize`, and `ReferenceMiddleware` runs the
+same function through `gate()` for the Scalar page this app mounts itself. An
+`Authorize` returning a `Response` refuses with it, which is how a browser gets a
+login form where an API client would get a 404.
 
 `notFound: 'public'` is set, so an unmatched path is a 404 rather than the
 guard's 401. Middleware appended by `app.use` relies on that.

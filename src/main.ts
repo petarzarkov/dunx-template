@@ -4,6 +4,9 @@ import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
 import { SwaggerRenderer } from '@dunx/openapi/swagger';
 import { AppModule } from './app.module.js';
 import { authDocument } from './auth/auth.document.js';
+import { Auth } from '@dunx/auth';
+import { AccountsModule } from './auth/auth.module.js';
+import { docsAuthorize } from './auth/docs-authorize.js';
 import { AUTH_MOUNT, authBasePath } from './auth/auth.options.js';
 import { AppConfigService } from './config/app.config.service.js';
 import { validateConfig } from './config/env.validation.js';
@@ -69,8 +72,15 @@ const app = await HttpFactory.create(
         return response;
       }`,
     }),
-    useFactory: (config: AppConfigService) => {
+    /**
+     * `AccountsModule` for `Auth`. A dynamic module is its own scope, so the
+     * factory sees only what this module imports, and `Auth` is the one
+     * dependency here that is not global.
+     */
+    imports: [AccountsModule],
+    useFactory: (config: AppConfigService, auth: Auth) => {
       const { app: meta, docs } = config.values;
+      const authorize = docsAuthorize(auth, meta.env, meta.prefix);
       return {
         title: meta.name,
         version: meta.version,
@@ -86,9 +96,18 @@ const app = await HttpFactory.create(
         // `scripts`/openapi.config.ts shares this function and runs with no
         // container at all. One contribution, two entrypoints.
         contribute: [authDocument(boot)],
+        /**
+         * One decision for the page, the document and the explorer's own
+         * assets. `ReferenceMiddleware` runs the same function through `gate()`,
+         * so the Scalar page this app mounts itself is covered by it too.
+         *
+         * Spread rather than assigned, because `exactOptionalPropertyTypes`
+         * refuses an explicit `undefined` and locally there is no gate at all.
+         */
+        ...(authorize === undefined ? {} : { authorize }),
       };
     },
-    inject: [AppConfigService] as const,
+    inject: [AppConfigService, Auth] as const,
   }),
   httpOptions(boot),
 );
