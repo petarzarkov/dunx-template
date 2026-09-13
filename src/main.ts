@@ -1,143 +1,171 @@
-import { NestJsCmsModule } from '@arkv/nestjs-cms';
-import { ContextLogger } from '@arkv/nestjs-context-logger';
-import { NestFactory } from '@nestjs/core';
-import type { NestExpressApplication } from '@nestjs/platform-express';
-import { AuthService } from '@thallesp/nestjs-better-auth';
-import 'reflect-metadata';
-import pkg from '../package.json';
-import { AppModule } from './app.module';
-import type { Auth } from './auth/auth.config';
-import { AppEnv } from './config/enum/app-env.enum';
-import type { ValidatedConfig } from './config/env.validation';
-import { AppConfigService } from './config/services/app.config.service';
-import { GLOBAL_PREFIX } from './constants';
-import { setupDocs } from './core/docs/setupDocs';
-import { DbExceptionFilter } from './core/filters/db-exception.filter';
-import { GenericExceptionFilter } from './core/filters/generic-exception.filter';
-import { HttpLoggingInterceptor } from './core/interceptors/http-logging.interceptor';
-import { RequestMiddleware } from './core/middlewares/request.middleware';
-import { RedisService } from './infra/redis/services/redis.service';
-import { SocketConfigAdapter } from './notifications/events/socket.adapter';
+import { Logger } from '@dunx/core';
+import { HttpFactory, StaticFiles } from '@dunx/http';
+import { OpenApiExplorer, OpenApiModule } from '@dunx/openapi';
+import { SwaggerRenderer } from '@dunx/openapi/swagger';
+import { AppModule } from './app.module.js';
+import { authDocument } from './auth/auth.document.js';
+import { AUTH_MOUNT, authBasePath } from './auth/auth.options.js';
+import { AppConfigService } from './config/app.config.service.js';
+import { validateConfig } from './config/env.validation.js';
+import { httpOptions } from './http.options.js';
+import { forceExitAfter } from './core/force-exit.js';
+import { HomeMiddleware } from './core/middlewares/home.middleware.js';
+import { ReferenceMiddleware } from './core/middlewares/reference.middleware.js';
+import { SERVICE_ROUTES } from './constants.js';
 
-async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    forceCloseConnections: true,
-    // Better Auth requires the raw request body, so NestJS's body parser is
-    // disabled here and re-enabled for non-auth routes by AuthModule's
-    // `bodyParser` option (see app.module.ts).
-    bodyParser: false,
-    logger: ['fatal', 'error', 'warn'],
-  });
-  const logger = app.get(ContextLogger);
-  app.useLogger(logger);
+/**
+ * The config is validated here as well as inside `ConfigModule`, because
+ * `HttpOptions` is an argument to `HttpFactory.create` - the call that *builds* the
+ * container - so `requestLogging`, `onError`, `middleware` and `relay` cannot read
+ * validated config. Middleware is registered by class, never by instance, so the
+ * NestJS trick of `app.useGlobalInterceptors(new HttpLoggingInterceptor(config))`
+ * after `app.get(ConfigService)` has no counterpart.
+ *
+ * `validateConfig` is a pure function of the environment, so calling it twice costs
+ * one extra zod parse at boot and cannot disagree with itself.
+ *
+ * `OpenApiModule` used to be the other half of this. It has `forRootAsync` now, so
+ * the title, version, description and both mount paths come off `AppConfigService`
+ * like every other module's options - including the paths, which works because the
+ * controller declares its routes with thunks resolved at discovery, after every
+ * provider has settled.
+ */
+const boot = validateConfig(Bun.env);
 
-  // Apply request middleware at Express level (before NestJS routing)
-  // This ensures context is set for ALL requests, including 404s
-  const requestMiddleware = app.get(RequestMiddleware);
-  app.use(requestMiddleware.use.bind(requestMiddleware));
-
-  // Add global exception handling
-  process.on('uncaughtException', (error, origin) => {
-    logger.fatal('Uncaught Exception', { err: error, origin });
-    process.exit(1);
-  });
-  process.on('unhandledRejection', (reason, promise) => {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
-    logger.error('Unhandled Rejection', { err: error, promise });
-  });
-
-  const configService = app.get(AppConfigService<ValidatedConfig>);
-  const appConfig = configService.getOrThrow('app');
-  if (appConfig.nodeEnv === 'production') {
-    app.enableShutdownHooks();
-  }
-
-  const corsConfig = configService.getOrThrow('cors');
-
-  const dbExceptionFilter = app.get(DbExceptionFilter);
-  const genericExceptionFilter = app.get(GenericExceptionFilter);
-  const httpLoggingInterceptor = app.get(HttpLoggingInterceptor);
-
-  app.setGlobalPrefix(GLOBAL_PREFIX);
-  app.useGlobalInterceptors(httpLoggingInterceptor);
-  app.useGlobalFilters(genericExceptionFilter, dbExceptionFilter);
-
-  // Global configuration
-  app.setGlobalPrefix(GLOBAL_PREFIX);
-
-  // Trust proxy for correct IP detection behind load balancers
-  app.set('trust proxy', true);
-
-  // CORS
-  app.enableCors({
-    origin: corsConfig.origin,
-    credentials: appConfig.env === AppEnv.PRD,
-  });
-
-  // Request validation is handled globally by the ZodValidationPipe
-  // (registered as APP_PIPE in AppModule).
-
-  // Swagger documentation (merges the Better Auth routes into the doc)
-  const auth = app.get<AuthService<Auth>>(AuthService).instance;
-  const { title, document, swaggerPath, scalarPath } = await setupDocs(
-    app,
-    pkg,
-    appConfig,
-    auth,
-  );
-
-  // The Bull Board queue dashboard is mounted (and basic-auth protected in
-  // deployed envs) by QueueDashboardModule — see
-  // src/infra/queue/queue-dashboard.module.ts.
-  const queuesPath = `/${GLOBAL_PREFIX}/queues`;
-
-  // Admin CMS UI driven by the OpenAPI document (mount after docs are built)
-  await NestJsCmsModule.setup(app, document, {
-    path: '/cms',
-    apiPrefix: `/${GLOBAL_PREFIX}`,
-    title,
-  });
-
-  const redisService = app.get(RedisService);
-  app.useWebSocketAdapter(
-    new SocketConfigAdapter(app, configService, redisService),
-  );
-
-  const appPort = configService.get('app.port');
-  await app.listen(appPort, '0.0.0.0');
-
-  const wsConfig = configService.get('ws');
-  const appUrl = await app.getUrl();
-
-  const wsUrl =
-    appUrl
-      .replace('http', 'ws')
-      .replace(
-        appPort.toString(),
-        wsConfig.port?.toString() || appPort.toString(),
-      ) + wsConfig.path;
-
-  const sharingHttpServer =
-    !wsConfig.port || wsConfig.port?.toString() === appPort.toString();
-
-  logger.log(
-    `API ${title} service, docs at ${appUrl}${swaggerPath} and scalar at ${appUrl}${scalarPath}`,
-    {
-      versions: {
-        node: process.versions.node,
-        bun: process.versions.bun,
-        npm: process.versions.npm,
-      },
-      queuesDashboard: `${appUrl}${queuesPath}`,
-      ws: {
-        url: wsUrl,
-        sharingHttpServer: sharingHttpServer,
-      },
+const app = await HttpFactory.create(
+  OpenApiModule.forRootAsync({
+    root: AppModule.forRoot(),
+    /**
+     * Which UI, and how it behaves. Beside `root` rather than inside the factory
+     * because the controller declares its routes before a container exists.
+     *
+     * 3.7.0 split the explorer bundles out of `@dunx/openapi`, so a renderer is
+     * now an explicit choice: without one the module serves the document alone.
+     * Scalar is mounted beside this one by `ReferenceMiddleware`.
+     */
+    renderer: new SwaggerRenderer({
+      title: `${boot.app.name} ${boot.app.env}`,
+      persistAuthorization: true,
+      displayRequestDuration: true,
+      docExpansion: 'none',
+      tagsSorter: 'alpha',
+      operationsSorter: 'method',
+      /**
+       * The source of an expression, not a function: the page is rendered on the
+       * server, so no closure can travel. This is the NestJS template's
+       * `setBearerOnLogin` interceptor - sign in through the explorer and the
+       * Authorize dialog fills itself in from the response.
+       *
+       * `bearer` rather than `bearerAuth`: dunx names the scheme a `@Roles` route
+       * is documented against `bearer`.
+       */
+      responseInterceptor: `(response) => {
+        const url = String(response.url ?? '');
+        const signedIn = url.includes('${authBasePath(boot.app.prefix)}/sign-in/email') ||
+          url.includes('${authBasePath(boot.app.prefix)}/sign-up/email');
+        if (response.ok && signedIn && response.body && response.body.token) {
+          window.ui.preauthorizeApiKey('bearer', response.body.token);
+        }
+        return response;
+      }`,
+    }),
+    useFactory: (config: AppConfigService) => {
+      const { app: meta, docs } = config.values;
+      return {
+        title: meta.name,
+        version: meta.version,
+        description: meta.description,
+        path: `/${docs.path}`,
+        jsonPath: `/${docs.jsonPath}`,
+        // Better Auth serves every one of its endpoints from one wildcard route, so
+        // route discovery sees none of them. This asks the library for its own
+        // schema and merges it in - a declared route wins a collision, and a missing
+        // `openAPI()` plugin costs documentation rather than the boot.
+        //
+        // Built from `boot`, not from the injected `Auth`, because
+        // `scripts`/openapi.config.ts shares this function and runs with no
+        // container at all. One contribution, two entrypoints.
+        contribute: [authDocument(boot)],
+      };
     },
+    inject: [AppConfigService] as const,
+  }),
+  httpOptions(boot),
+);
+
+const config = app.get(AppConfigService);
+const logger = app.get(Logger);
+const { app: appConfig, cors } = config.values;
+
+// Everything below `listen()` configures the route table, which is built exactly
+// once. Calling any of them afterwards throws rather than being quietly dropped.
+app.setGlobalPrefix(appConfig.prefix);
+app.set('trust proxy', cors.trustProxy);
+app.enableCors({ origin: cors.origin, credentials: config.get('isProd') });
+
+/**
+ * Appended after `httpOptions.middleware`, so it sits behind `SessionGuard`. That
+ * is only safe because `notFound: 'public'` is set: a path matching no route
+ * carries no route metadata, the guard lets it through, and this answers it. With
+ * the upstream `'guarded'` default the page would be a 401.
+ */
+/**
+ * `ReferenceMiddleware` is deliberately not in any module's `providers`. It
+ * injects `OpenApiExplorer`, which `OpenApiModule` declares - and that module
+ * wraps `AppModule` as its root, so `AppModule` cannot see into it. An unbound
+ * class self-binds into the scope that asks first, and `app.use` asks from the
+ * app root, which is the one scope where the explorer is visible.
+ */
+app.use(StaticFiles, HomeMiddleware, ReferenceMiddleware);
+
+app.enableShutdownHooks();
+const cancelWatchdog = forceExitAfter();
+
+const { warnings } = app.get(OpenApiExplorer);
+if (warnings.length > 0) logger.warn('openapi schema warnings', { warnings });
+
+if (config.get('auth').usingDevSecret) {
+  logger.warn(
+    'BETTER_AUTH_SECRET is unset, using the development constant. Sessions are forgeable by anyone with this repository.',
   );
 }
 
-bootstrap().catch(err => {
-  console.error('Failed to start application:', err);
-  process.exit(1);
+const url = await app.listen(appConfig.port);
+
+logger.info(`${appConfig.name} listening`, {
+  url,
+  env: appConfig.env,
+  docs: `${url}${appConfig.prefix}/${boot.docs.path}`,
+  openapi: `${url}${appConfig.prefix}/${boot.docs.jsonPath}`,
+  health: `${url}${appConfig.prefix}/${SERVICE_ROUTES.BASE}/${SERVICE_ROUTES.HEALTH}`,
+  /**
+   * `/ok`, not the bare mount.
+   *
+   * better-auth serves every endpoint it and its plugins declare under one
+   * wildcard, which `@dunx/auth` mounts as `<basePath>/*` - and `Bun.serve`'s `/*`
+   * needs a segment after the slash, so **nothing is registered at the mount
+   * itself**. Printing it here advertised a URL that answered 404 to anyone who
+   * clicked it. `/ok` is better-auth's own liveness route, returns `{"ok":true}`,
+   * and is the one GET at this mount that a browser can usefully open.
+   *
+   * The sign-in and sign-up endpoints are POSTs, so they belong in the OpenAPI
+   * document rather than in a list of links - `authDocument()` contributes them.
+   */
+  auth: `${url}${appConfig.prefix}${AUTH_MOUNT}/ok`,
+  // Admin-only, so opening it in a browser with no session is a 401 by design -
+  // `SessionGuard` refusing is the template working, not a misconfiguration. The
+  // URL is here because it is where the queue data lives; get a token first.
+  queues: `${url}${appConfig.prefix}/queues`,
+  websocket: app.gatewayPaths.map(
+    (path) => `${url.replace('http', 'ws').replace(/\/$/, '')}${path}`,
+  ),
+  timezone: appConfig.timezone,
+  versions: { bun: Bun.version, node: process.versions.node },
 });
+
+await app.closed;
+
+// Every shutdown hook has run, so leaving is correct - and explicit, because a
+// connection that never opened can still be holding the loop. See force-exit.ts.
+cancelWatchdog();
+process.exit(0);

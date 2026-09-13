@@ -1,121 +1,259 @@
-import { buildStandaloneAuth } from '@/auth/auth.config';
-import { UserRole } from '@/users/enum/user-role.enum';
-import { E2E } from '../constants';
-import { ApiClient } from '../utils/api-client';
-import { DbClient } from '../utils/db-client';
-import { WsClient } from '../utils/ws-client';
+import { readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import type { Subprocess } from 'bun';
+import { ApiClient } from '../utils/api-client.js';
+import { DbClient } from '../utils/db-client.js';
 
 /**
- * Default admin user for e2e tests
+ * The e2e suite drives a **separate process**, started the way production starts
+ * it (`bun src/main.ts`), rather than `createTestServer`. That is the only way
+ * to cover `bunfig.toml`'s preload, `.env` loading, the migrations running on a
+ * real file, and graceful shutdown.
  */
-export const E2E_ADMIN = {
-  email: 'admin@e2e-test.com',
-  password: E2E.TEST_PASSWORD,
-  role: UserRole.ADMIN,
+export interface TestContext {
+  readonly api: ApiClient;
+  readonly db: DbClient;
+  readonly adminId: string;
+  readonly adminToken: string;
+  /** `http://127.0.0.1:PORT` without the api prefix, for the websocket upgrade. */
+  readonly origin: string;
+}
+
+let server: Subprocess | undefined;
+let context: TestContext | undefined;
+
+/**
+ * What the e2e server needs to boot, as code.
+ *
+ * These are test fixtures, not secrets, and they used to live only in `e2e/.env` -
+ * which `.gitignore` matches with its `.env` rule, so the file existed on every
+ * developer machine and in no CI run. The suite passed locally and failed on the
+ * runner with `API_PORT: expected number, received NaN`, because the server booted
+ * with no configuration at all.
+ *
+ * A committed default is the fix: the suite now works from a clean clone with no
+ * env file present, and `e2e/.env` still overrides when someone wants it to.
+ */
+const DEFAULTS: Record<string, string> = {
+  API_PORT: '3999',
+  APP_ENV: 'local',
+  NODE_ENV: 'test',
+  LOG_LEVEL: 'fatal',
+  SQLITE_DB_PATH: './.tmp/e2e.db',
+  STORAGE_LOCAL_ROOT: './.tmp/e2e-uploads',
+  // The upload fixture is a 4x4 PNG, well under the 1 KB production floor. The
+  // floor itself is asserted in `src/files/files.spec.ts`, where a file can be
+  // built to violate exactly one rule at a time.
+  UPLOAD_MIN_BYTES: '1',
+  E2E_API_URL: 'http://127.0.0.1:3999/api',
+  // The credential `AuthAdminSeeder` creates at boot, and what the suite signs in
+  // with. A user row inserted by hand has no `account` row and cannot sign in.
+  SEED_ADMIN_EMAIL: 'admin@e2e-test.com',
+  SEED_ADMIN_PASSWORD: 'e2e-admin-password',
+  // The rate limiter is real and its counters live in a Redis that outlives the
+  // process, so a suite needs its own namespace and enough headroom to finish.
+  THROTTLE_LIMIT: '10000',
+  THROTTLE_PREFIX: `e2e-${crypto.randomUUID()}`,
+  /**
+   * The production default is 500 ms, and the websocket relay is built with
+   * `maxRetries: 0` - so on a cold CI runner the boot subscribe can miss a
+   * broker that is still starting, and the node stays deaf until a bounded
+   * retry lands. This suite is testing the round trip, not the timeout.
+   */
+  REDIS_CONNECT_TIMEOUT_MS: '5000',
 };
 
 /**
- * Global test context singleton for E2E tests
- * Provides shared instances of API, DB, and WS clients
+ * `e2e/.env`, parsed here rather than inherited, and optional.
+ *
+ * `bun test --env-file` loads it into the **test** process, and the server is a
+ * child of that process, so it only sees these values if they were exported. It
+ * worked locally by accident: Bun auto-loads a root `.env`, which is gitignored,
+ * so CI had none and the server booted with `API_PORT` undefined and died on
+ * `expected number, received NaN`.
  */
-class TestContext {
-  readonly api: ApiClient;
-  readonly db: DbClient;
-  readonly ws: WsClient;
-
-  private initialized = false;
-
-  constructor() {
-    this.api = new ApiClient();
-    this.db = new DbClient();
-    this.ws = new WsClient();
+const e2eEnv = (): Record<string, string> => {
+  const file = new URL('../.env', import.meta.url).pathname;
+  const out: Record<string, string> = {};
+  let text = '';
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return out;
   }
-
-  async initialize(): Promise<void> {
-    if (this.initialized) return;
-
-    await this.db.initialize();
-    await this.ensureAdminUser();
-    this.initialized = true;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    out[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
   }
+  return out;
+};
 
-  /**
-   * Ensure a known admin user exists for tests. Created through Better Auth so
-   * the scrypt credential + `account` row match, then promoted to `admin`. A
-   * stale row is deleted first (FK cascade removes its account/session) so the
-   * password is always exactly {@link E2E_ADMIN}.password.
-   */
-  private async ensureAdminUser(): Promise<void> {
-    const existingUser = this.db.getUserByEmail(E2E_ADMIN.email);
-    if (existingUser) {
-      this.db.users.delete({ id: existingUser.id });
+const ENV = { ...DEFAULTS, ...e2eEnv() };
+
+const DB_PATH =
+  Bun.env['SQLITE_DB_PATH'] ?? ENV['SQLITE_DB_PATH'] ?? './.tmp/e2e.db';
+
+export const APP_DIR = new URL('../..', import.meta.url).pathname;
+
+/**
+ * Exactly what the server process was given.
+ *
+ * Exported because the queue round trip spawns a **worker**, and the two have to
+ * agree on the queue prefix, the relay channel, the database and the broker. A
+ * worker spawned from `process.env` alone inherits none of the defaults this
+ * file supplies, which on a machine with no `e2e/.env` - every CI runner - is a
+ * different queue and a job nobody consumes.
+ */
+export const serverEnv = (): Record<string, string> => ({
+  ...(process.env as Record<string, string>),
+  ...ENV,
+  SQLITE_DB_PATH: DB_PATH,
+});
+
+/**
+ * Reads a piped stream into a buffer as it arrives, and hands back a getter.
+ *
+ * Exported for the same reason: a pipe nobody reads fills at 64 KiB and blocks
+ * the child, and a spawned process whose output is discarded fails silently.
+ */
+export { drain };
+const API_URL =
+  Bun.env['E2E_API_URL'] ?? ENV['E2E_API_URL'] ?? 'http://127.0.0.1:3999/api';
+
+const waitForReady = async (
+  url: string,
+  output: () => string,
+): Promise<void> => {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      const response = await fetch(`${url}/service/up`);
+      if (response.ok) return;
+    } catch {
+      // not listening yet
     }
-
-    const auth = buildStandaloneAuth(this.db.drizzle);
-    const { user } = await auth.api.signUpEmail({
-      body: {
-        email: E2E_ADMIN.email,
-        password: E2E_ADMIN.password,
-        name: 'E2E Admin',
-      },
-    });
-    this.db.users.update(user.id, { role: E2E_ADMIN.role, banned: false });
-
-    console.log(`✅ Created e2e admin user: ${E2E_ADMIN.email}`);
+    await Bun.sleep(250);
   }
-
-  async destroy(): Promise<void> {
-    if (!this.initialized) return;
-
-    this.ws.disconnect();
-    await this.db.destroy();
-    this.initialized = false;
-  }
-
-  /**
-   * Reset state between tests
-   */
-  reset(): void {
-    this.api.clearAuthToken();
-    this.ws.disconnect();
-  }
-
-  /**
-   * Login as the default admin user
-   */
-  async loginAsAdmin(): Promise<{ token: string }> {
-    return this.api.login(E2E_ADMIN.email, E2E_ADMIN.password);
-  }
-}
-
-// Global singleton instance
-let testContext: TestContext | null = null;
+  // Without the server's own output this says nothing about why. A boot error is
+  // the usual cause and it is sitting in the pipe.
+  throw new Error(
+    `server never became ready at ${url}. Its output was:\n${output()}`,
+  );
+};
 
 /**
- * Get the global test context
+ * Reads a piped stream into a buffer as it arrives.
+ *
+ * A `Bun.spawn` pipe nobody reads fills at 64 KiB and then blocks the child on its
+ * next write, so a server that logs a line per request would hang partway through
+ * the suite. Draining it also means the boot output is available to put in an
+ * error message.
  */
-export function getTestContext(): TestContext {
-  if (!testContext) {
-    testContext = new TestContext();
-  }
-  return testContext;
-}
+const drain = (
+  stream: ReadableStream<Uint8Array> | undefined,
+): (() => string) => {
+  if (!stream) return () => '';
+  const chunks: string[] = [];
+  void (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of stream) chunks.push(decoder.decode(chunk));
+  })();
+  return () => chunks.join('').slice(-4000);
+};
 
 /**
- * Initialize the test context (called by preload)
+ * Refuses to run against a server this suite did not start.
+ *
+ * `waitForReady` polls an HTTP probe, so anything already listening on the port
+ * answers it - a `bun run dev` in another terminal, most likely. The suite then
+ * signed in against *that* server and opened the database file **it** was
+ * configured with, which surfaced as `SQLiteError: no such table: user` from a
+ * helper three files away. The port is the actual problem, so it says so.
  */
-export async function initializeTestContext(): Promise<TestContext> {
-  const ctx = getTestContext();
-  await ctx.initialize();
-  return ctx;
-}
+const assertPortFree = async (url: string): Promise<void> => {
+  const reachable = await fetch(`${url}/service/up`)
+    .then((response) => response.ok)
+    .catch(() => false);
+  if (!reachable) return;
+  throw new Error(
+    `${url} already answers, and this suite did not start it - a \`bun run dev\` ` +
+      'is the usual reason. The suite would sign in against that server and then ' +
+      'read a different database. Stop it, or point the suite elsewhere with ' +
+      'API_PORT and E2E_API_URL in e2e/.env.',
+  );
+};
 
-/**
- * Destroy the test context (called after all tests)
- */
-export async function destroyTestContext(): Promise<void> {
-  if (testContext) {
-    await testContext.destroy();
-    testContext = null;
+export const initializeTestContext = async (): Promise<TestContext> => {
+  if (context !== undefined) return context;
+
+  await assertPortFree(API_URL);
+
+  for (const suffix of ['', '-shm', '-wal']) {
+    await rm(`${DB_PATH}${suffix}`, { force: true });
   }
-}
+
+  server = Bun.spawn(['bun', 'src/main.ts'], {
+    cwd: APP_DIR,
+    // `e2e/.env` wins over the ambient environment, deliberately. Bun auto-loads a
+    // root `.env` into this process, and if that set API_PORT the server would
+    // listen somewhere the suite is not polling - which is the same class of bug
+    // as the one this parsing fixes.
+    env: serverEnv(),
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  const output = drain(server.stdout as ReadableStream<Uint8Array> | undefined);
+  const errors = drain(server.stderr as ReadableStream<Uint8Array> | undefined);
+  await waitForReady(API_URL, () => `${output()}${errors()}`);
+
+  const db = new DbClient(DB_PATH);
+  const email = ENV['SEED_ADMIN_EMAIL'] as string;
+  const password = ENV['SEED_ADMIN_PASSWORD'] as string;
+
+  // Through better-auth's own endpoint, against the running server - the same
+  // exchange a real client makes, and the only way to get a token the guard
+  // accepts.
+  const signIn = await fetch(`${API_URL}/auth/sign-in/email`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const adminToken = signIn.headers.get('set-auth-token');
+  if (adminToken === null) {
+    throw new Error(
+      `e2e sign-in failed: ${signIn.status} ${await signIn.text()}\n${output()}${errors()}`,
+    );
+  }
+
+  context = {
+    api: new ApiClient(API_URL, adminToken),
+    db,
+    adminId: db.idFor(email),
+    adminToken,
+    origin: API_URL.replace(/\/api\/?$/, ''),
+  };
+  return context;
+};
+
+export const getTestContext = (): TestContext => {
+  if (context === undefined) {
+    throw new Error(
+      'test context not initialized: is e2e/setup/preload.ts loaded?',
+    );
+  }
+  return context;
+};
+
+export const destroyTestContext = async (): Promise<void> => {
+  context?.db.close();
+  context = undefined;
+  if (server !== undefined) {
+    // SIGTERM, so `enableShutdownHooks` runs and the connection closes cleanly.
+    server.kill('SIGTERM');
+    await server.exited;
+    server = undefined;
+  }
+};

@@ -1,14 +1,27 @@
-import { Injectable } from '@nestjs/common';
-import { PageDto } from '@/core/pagination/dto/page.dto';
-import { AuditLogQueryDto } from '../dto/audit-log-query.dto';
-import { AuditLog } from '../entity/audit-log.entity';
-import { AuditLogRepository } from '../repos/audit-log.repository';
+import type { Page } from '@dunx/infra/pagination';
+import type { AuditLogEntry } from '../dto/audit-log.dto.js';
+import type { AuditLogRow } from '../schema/audit-log.schema.js';
+import {
+  AuditLogRepository,
+  type AuditFilters,
+} from '../repos/audit-log.repository.js';
 
-@Injectable()
+const present = (row: AuditLogRow): AuditLogEntry => ({
+  id: row.id,
+  actorId: row.actorId,
+  action: row.action,
+  entityName: row.entityName,
+  entityId: row.entityId,
+  oldValues: row.oldValues,
+  newValues: row.newValues,
+  createdAt: row.createdAt.toISOString(),
+});
+
 export class AuditService {
-  constructor(private readonly auditLogRepository: AuditLogRepository) {}
+  constructor(private readonly repo: AuditLogRepository) {}
 
-  getAuditLogs(queryDto: AuditLogQueryDto): PageDto<AuditLog> {
-    return this.auditLogRepository.findPaginated(queryDto);
+  list(filters: AuditFilters): Page<AuditLogEntry> {
+    const page = this.repo.list(filters);
+    return { data: page.data.map(present), meta: page.meta };
   }
 }

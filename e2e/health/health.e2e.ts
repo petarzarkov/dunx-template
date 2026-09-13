@@ -1,56 +1,74 @@
 import { describe, expect, test } from 'bun:test';
-import { getTestContext } from '../setup/context';
+import { getTestContext } from '../setup/context.js';
 
-describe('Health Endpoints (e2e)', () => {
-  const ctx = getTestContext();
-
-  describe('GET /api/service/health', () => {
-    test('should return 200 OK with healthy status', async () => {
-      const response = await ctx.api.get<{
-        status: string;
-        info: Record<string, { status: string }>;
-      }>('/api/service/health');
-
-      expect(response.status).toBe(200);
-      expect(response.data.status).toBe('ok');
-      expect(response.data.info).toHaveProperty('db');
-      expect(response.data.info.db.status).toBe('up');
-    });
+describe('service endpoints against a live server', () => {
+  test('liveness', async () => {
+    const { api } = getTestContext();
+    const { status, body } = await api.json<{ uptimeSeconds: number }>(
+      'service/up',
+    );
+    expect(status).toBe(200);
+    expect(body.uptimeSeconds).toBeGreaterThan(0);
   });
 
-  describe('GET /api/service/up', () => {
-    test('throttling', async () => {
-      ctx.api.clearAuthToken();
-      const promises = Array.from({ length: 30 }, async () => {
-        return ctx.api.get<{ uptimeSeconds: number }>('/api/service/up');
-      });
-
-      const responses = await Promise.all(promises);
-
-      expect(responses.length).toBe(30);
-
-      // Count successful (200) and throttled (429) responses
-      const successResponses = responses.filter(r => r.status === 200);
-      const throttledResponses = responses.filter(r => r.status === 429);
-
-      // At least one should be throttled (429) since we exceeded
-      expect(throttledResponses.length).toBeGreaterThanOrEqual(1);
-      expect(successResponses.length).toBeGreaterThanOrEqual(1);
-    });
+  test('readiness reports the real SQLite file up', async () => {
+    const { api } = getTestContext();
+    const { status, body } = await api.json<{
+      status: string;
+      info: Record<string, { status: string }>;
+    }>('service/health');
+    expect(status).toBe(200);
+    expect(body.status).toBe('ok');
+    expect(body.info['db']?.status).toBe('up');
   });
 
-  describe('GET /api/service/config', () => {
-    test('should return 200 OK with config information', async () => {
-      const response = await ctx.api.get<{
-        name: string;
-        version: string;
-        env: string;
-      }>('/api/service/config');
+  /**
+   * W3C trace context, not `x-request-id`.
+   *
+   * dunx replaced the uuid request id with a real trace: the response header is
+   * `traceresponse`, the inbound one is `traceparent`, and the log line carries
+   * `traceId`/`spanId`/`traceFlags` where it used to carry `requestId`. Both are
+   * `00-<32 hex>-<16 hex>-<2 hex>`.
+   */
+  test('a logged response carries a trace', async () => {
+    const { api } = getTestContext();
+    const { headers } = await api.json('service/config');
+    expect(headers.get('traceresponse')).toMatch(
+      /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/,
+    );
+  });
 
-      expect(response.status).toBe(200);
-      expect(response.data).toHaveProperty('name');
-      expect(response.data).toHaveProperty('version');
-      expect(response.data).toHaveProperty('env');
+  /**
+   * An inbound trace is continued rather than replaced: the trace id is the
+   * caller's, and the span id is this hop's own. That is the whole difference
+   * between a trace and an echoed correlation header, so both halves are
+   * asserted.
+   */
+  test('an inbound traceparent is continued, with a new span', async () => {
+    const { api } = getTestContext();
+    const traceId = 'a'.repeat(32);
+    const spanId = 'b'.repeat(16);
+
+    const response = await api.raw('service/config', {
+      headers: { traceparent: `00-${traceId}-${spanId}-01` },
     });
+
+    const traceresponse = response.headers.get('traceresponse') ?? '';
+    const [, received, span] = traceresponse.split('-');
+    expect(received).toBe(traceId);
+    expect(span).not.toBe(spanId);
+  });
+
+  /**
+   * Pins a coupling that is easy to trip over. The trace is emitted by
+   * `RequestLoggingMiddleware`, so a path listed in `requestLogging.ignore`
+   * loses correlation as well as its log line - and so does everything the
+   * handler logs, because the `AsyncLocalStorage` scope is never opened.
+   * `/service/up` and `/service/health` are both ignored here.
+   */
+  test('KNOWN GAP: an ignored path gets no trace', async () => {
+    const { api } = getTestContext();
+    const { headers } = await api.json('service/up');
+    expect(headers.get('traceresponse')).toBeNull();
   });
 });

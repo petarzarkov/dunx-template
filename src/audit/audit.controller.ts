@@ -1,30 +1,23 @@
-import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { ApiAuth } from '@/core/decorators/api-auth.decorator';
-import { Roles } from '@/core/decorators/roles.decorator';
-import { PageDto } from '@/core/pagination/dto/page.dto';
-import { PaginatedDto } from '@/core/pagination/dto/paginated.dto';
-import { UserRole } from '@/users/enum/user-role.enum';
-import { AuditLogQueryDto } from './dto/audit-log-query.dto';
-import { AuditLog } from './entity/audit-log.entity';
-import { AuditService } from './services/audit.service';
+import { Controller, Get, Roles, type Input } from '@dunx/http';
+import { ApiDoc } from '@dunx/openapi';
+import type { Page } from '@dunx/infra/pagination';
+import { UserRole } from '../users/schema/user.schema.js';
+import { listAudit, type AuditLogEntry } from './dto/audit-log.dto.js';
+import { AuditService } from './services/audit.service.js';
 
-@ApiTags('audit')
-@ApiAuth()
-@Roles(UserRole.ADMIN)
+@ApiDoc({
+  tags: ['audit'],
+  description:
+    'Read side of the audit trail. Rows are written by SQLite triggers, never by application code.',
+})
 @Controller('audit-logs')
 export class AuditController {
-  constructor(private readonly auditService: AuditService) {}
+  constructor(private readonly audit: AuditService) {}
 
-  @Get()
-  @ApiOperation({ summary: 'Get audit log entries (admin only)' })
-  @ApiOkResponse({
-    description: 'A paginated list of audit log entries.',
-    type: PaginatedDto(AuditLog),
-  })
-  async getAuditLogs(
-    @Query() queryDto: AuditLogQueryDto,
-  ): Promise<PageDto<AuditLog>> {
-    return this.auditService.getAuditLogs(queryDto);
+  @ApiDoc({ tags: ['audit'], summary: 'List audit entries, keyset paginated' })
+  @Roles(UserRole.ADMIN)
+  @Get('/', listAudit)
+  list(input: Input<typeof listAudit>): Page<AuditLogEntry> {
+    return this.audit.list(input.query);
   }
 }

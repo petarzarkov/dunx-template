@@ -1,115 +1,71 @@
-import type { Socket } from 'socket.io-client';
-import { io } from 'socket.io-client';
-import { E2E } from '../constants';
+export interface Frame {
+  event: string;
+  data: unknown;
+}
 
 /**
- * E2E WebSocket Client
- * Uses socket.io-client to connect to the WebSocket gateway
+ * Opens the gateway on the same origin the REST calls use. There is no second
+ * listener and no `/socket.io` path: the upgrade is a route in the same
+ * `Bun.serve` table.
+ *
+ * A refused upgrade never becomes a socket, so `@OnUpgrade` returning a 401
+ * surfaces here as an `error` event rather than a response with a body.
  */
-export class WsClient {
-  private socket: Socket | null = null;
-  private receivedEvents: Map<string, unknown[]> = new Map();
-
-  connect(accessToken: string, baseUrl: string = E2E.WS_URL): Socket {
-    if (this.socket?.connected) {
-      this.disconnect();
-    }
-
-    this.socket = io(baseUrl, {
-      path: '/ws',
-      auth: {
-        token: `Bearer ${accessToken}`,
-      },
-      transports: ['websocket'],
-      autoConnect: true,
+export const open = (origin: string, token?: string): Promise<WebSocket> =>
+  new Promise((resolve, reject) => {
+    const socket = new WebSocket(
+      `${origin.replace(/^http/, 'ws')}/ws`,
+      token === undefined
+        ? undefined
+        : { headers: { authorization: `Bearer ${token}` } },
+    );
+    socket.addEventListener('open', () => resolve(socket), { once: true });
+    socket.addEventListener('error', () => reject(new Error('refused')), {
+      once: true,
     });
+  });
 
-    // Capture all events
-    this.socket.onAny((event: string, ...args: unknown[]) => {
-      const events = this.receivedEvents.get(event) || [];
-      events.push(args[0]);
-      this.receivedEvents.set(event, events);
-    });
-
-    return this.socket;
-  }
-
+export interface WaitOptions {
+  readonly timeoutMs?: number;
   /**
-   * Wait for a specific event with timeout
+   * Which frame of that event to accept.
+   *
+   * Needed because a queue outlives the process that filled it: a rerun against
+   * the same broker can deliver a notification left over from the last one, and
+   * a test that took the first `notification` it saw would assert against
+   * somebody else's job. Matching on content rather than arrival order is the
+   * only thing that makes this reliable.
    */
-  waitForEvent<T = unknown>(
-    eventName: string,
-    timeoutMs = 5000,
-    predicate: (data: T) => boolean = () => true, // Default: accept any event
-  ): Promise<T> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        return reject(new Error('Socket not connected'));
-      }
-
-      // Create the timeout
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(new Error(`Timeout waiting for event: ${eventName}`));
-      }, timeoutMs);
-
-      // Define the listener
-      const listener = (data: T) => {
-        // Only resolve if the data matches our criteria
-        if (predicate(data)) {
-          cleanup();
-          resolve(data);
-        }
-        // Otherwise, ignore this event and keep waiting
-      };
-
-      // Cleanup helper to remove listener and clear timeout
-      const cleanup = () => {
-        clearTimeout(timeout);
-        this.socket?.off(eventName, listener);
-      };
-
-      // Listen (use .on, not .once, so we can ignore non-matching events)
-      this.socket.on(eventName, listener);
-    });
-  }
-
-  /**
-   * Wait for connection acknowledgment
-   */
-  waitForConnected(timeoutMs = 5000): Promise<{
-    message: string;
-    payload: { id: string; email: string };
-  }> {
-    return this.waitForEvent('connected', timeoutMs);
-  }
-
-  /**
-   * Get all received events for a specific event name
-   */
-  getReceivedEvents(eventName: string): unknown[] {
-    return this.receivedEvents.get(eventName) || [];
-  }
-
-  /**
-   * Emit an event to the server
-   */
-  emit(event: string, data?: unknown): void {
-    if (!this.socket) {
-      throw new Error('Socket not connected');
-    }
-    this.socket.emit(event, data);
-  }
-
-  disconnect(): void {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
-    this.receivedEvents.clear();
-  }
-
-  isConnected(): boolean {
-    return this.socket?.connected ?? false;
-  }
+  readonly where?: (frame: Frame) => boolean;
 }
+
+/**
+ * The next frame carrying `event` and satisfying `where`, ignoring everything
+ * else on the socket.
+ *
+ * Filtering rather than taking the first message is what makes this usable on a
+ * connection that also receives chat and notifications: a test waiting for one
+ * event should not fail because an unrelated one arrived first.
+ */
+export const frame = (
+  socket: WebSocket,
+  event: string,
+  options: WaitOptions = {},
+): Promise<Frame> => {
+  const { timeoutMs = 5000, where } = options;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`no matching ${event} within ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    const listener = (message: MessageEvent): void => {
+      const parsed = JSON.parse(String(message.data)) as Frame;
+      if (parsed.event !== event) return;
+      if (where !== undefined && !where(parsed)) return;
+      clearTimeout(timer);
+      socket.removeEventListener('message', listener);
+      resolve(parsed);
+    };
+    socket.addEventListener('message', listener);
+  });
+};

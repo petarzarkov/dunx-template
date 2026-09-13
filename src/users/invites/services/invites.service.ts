@@ -1,117 +1,154 @@
-import { randomBytes } from 'node:crypto';
-import {
-  ConflictException,
-  ForbiddenException,
-  Injectable,
-  Optional,
-} from '@nestjs/common';
-import { AuthService } from '@thallesp/nestjs-better-auth';
-import type { Auth } from '@/auth/auth.config';
-import { JobPublisherService } from '@/infra/queue/services/job-publisher.service';
-import { EVENTS } from '@/notifications/events/events';
-import { SanitizedUser } from '@/users/entity/user.entity';
-import { UserRole } from '@/users/enum/user-role.enum';
-import { AcceptInviteDto } from '@/users/invites/dto/accept-invite.dto';
-import { CreateInviteDto } from '@/users/invites/dto/create-invite.dto';
-import { ListInvitesQueryDto } from '@/users/invites/dto/list-invites.dto';
-import { Invite } from '@/users/invites/entity/invite.entity';
-import { InviteStatus } from '@/users/invites/enum/invite-status.enum';
-import { InvitesRepository } from '@/users/invites/repos/invites.repository';
-import { UsersRepository } from '@/users/repos/users.repository';
+import { Auth } from '@dunx/auth';
+import { Logger } from '@dunx/core';
+import { HttpError, HttpStatusCode } from '@dunx/http';
+import { JobPublisher } from '@dunx/infra/queue';
+import { AppConfigService } from '../../../config/app.config.service.js';
+import { JOBS, QUEUES } from '../../../notifications/events/events.js';
+import type { SanitizedUser } from '../../dto/user.dto.js';
+import { UserRole } from '../../schema/user.schema.js';
+import { UsersRepository } from '../../repos/users.repository.js';
+import type { AcceptInvite, CreateInvite, Invite } from '../dto/invite.dto.js';
+import { InvitesRepository } from '../repos/invites.repository.js';
+import { InviteStatus, type InviteRow } from '../schema/invite.schema.js';
 
-@Injectable()
+/** Never returns `inviteCode`. See the note on the `Invite` schema. */
+const present = (row: InviteRow): Invite => ({
+  id: row.id,
+  email: row.email,
+  role: row.role,
+  status: row.status,
+  expiresAt: row.expiresAt.toISOString(),
+  createdAt: row.createdAt.toISOString(),
+});
+
 export class InvitesService {
   constructor(
-    private readonly invitesRepository: InvitesRepository,
-    private readonly usersRepository: UsersRepository,
-    // Only used by `acceptInvite` (an HTTP flow that runs in the main process).
-    // Optional so this module can also load inside the sandboxed job-worker
-    // context, whose `JobModule` has no Better Auth `AuthModule`.
-    @Optional() private readonly authService: AuthService<Auth> | undefined,
-    private readonly jobPublisher: JobPublisherService,
+    private readonly repo: InvitesRepository,
+    private readonly users: UsersRepository,
+    private readonly auth: Auth,
+    private readonly publisher: JobPublisher,
+    private readonly config: AppConfigService,
+    private readonly logger: Logger,
   ) {}
 
-  findAll(query: ListInvitesQueryDto): Invite[] {
-    return this.invitesRepository.findAll(query.statuses);
+  list(status?: InviteStatus): Invite[] {
+    return this.repo.list(status).map(present);
   }
 
-  async create(createInviteDto: CreateInviteDto): Promise<Invite> {
-    const { email, role } = createInviteDto;
-
-    const existingUser = this.usersRepository.findByEmail(email);
-    if (existingUser) {
-      throw new ConflictException(
-        `User with email ${email} already registered.`,
+  async create(input: CreateInvite): Promise<Invite> {
+    if (this.users.findByEmail(input.email) !== undefined) {
+      throw new HttpError(
+        HttpStatusCode.CONFLICT,
+        `${input.email} already has an account`,
       );
     }
 
-    // Reuse an existing invite row for this email if present (keeps its id).
-    const existingInvite = this.invitesRepository.findByEmail(email);
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    const invite = this.invitesRepository.save({
-      id: existingInvite?.id,
-      email,
-      inviteCode: randomBytes(32).toString('hex'),
-      role,
-      expiresAt,
+    const { ttlHours } = this.config.get('invites');
+    const row = this.repo.upsert({
+      email: input.email,
+      // 32 bytes of CSPRNG, hex. The code is the only thing standing in front
+      // of a public route, so it is generated rather than derived from
+      // anything about the invitee.
+      inviteCode: Buffer.from(
+        crypto.getRandomValues(new Uint8Array(32)),
+      ).toString('hex'),
+      role: input.role,
       status: InviteStatus.PENDING,
+      expiresAt: new Date(Date.now() + ttlHours * 3_600_000),
     });
 
-    await this.jobPublisher.publishJob(
-      EVENTS.ROUTING_KEYS.USER_INVITED,
-      { invite },
-      { emitToAdmins: true },
-    );
+    /**
+     * Wrapped, like the registration hook and unlike the password reset: an
+     * unreachable queue must not lose the invite row that was just written. The
+     * operator can see it pending and send it again.
+     */
+    try {
+      await this.publisher.publish(QUEUES.NOTIFICATIONS, JOBS.USER_INVITED, {
+        inviteId: row.id,
+        email: row.email,
+        role: row.role,
+        inviteCode: row.inviteCode,
+        expiresAt: row.expiresAt.toISOString(),
+      });
+    } catch (error) {
+      this.logger.warn('invite notification not queued', {
+        inviteId: row.id,
+        reason: (error as Error).message,
+      });
+    }
 
-    return invite;
+    return present(row);
   }
 
   /**
-   * Public invite acceptance: validate the code, create the account through
-   * Better Auth (`auth.api.signUpEmail` → scrypt hash + `account` row + the
-   * `user.create` hook that fires the welcome notification), apply the invited
-   * role, and mark the invite accepted.
+   * The public half. Knowing the code is the authorisation, so every refusal
+   * below is the same 403 with the same wording: a distinct "expired" or "already
+   * used" would let someone probe which codes exist.
    */
-  async acceptInvite(dto: AcceptInviteDto): Promise<SanitizedUser> {
-    if (!this.authService) {
-      throw new ForbiddenException('Auth unavailable in this process');
+  async accept(input: AcceptInvite): Promise<SanitizedUser> {
+    const invalid = (): never => {
+      throw new HttpError(HttpStatusCode.FORBIDDEN, 'Invalid invite');
+    };
+
+    const row = this.repo.findByCode(input.inviteCode);
+    if (row === undefined || row.status !== InviteStatus.PENDING)
+      return invalid();
+
+    if (row.expiresAt.getTime() < Date.now()) {
+      this.repo.setStatus(row.id, InviteStatus.EXPIRED);
+      return invalid();
+    }
+    if (this.users.findByEmail(row.email) !== undefined) {
+      // Accepted between the lookup and here, or the address signed up
+      // independently. Either way the invite is spent.
+      this.repo.setStatus(row.id, InviteStatus.ACCEPTED);
+      return invalid();
     }
 
-    const invite = this.invitesRepository.findByCodeAndStatus(
-      dto.inviteCode,
-      InviteStatus.PENDING,
-    );
-    if (!invite) {
-      throw new ForbiddenException('Invalid invite');
-    }
-    if (invite.expiresAt < new Date()) {
-      this.invitesRepository.update(invite.id, {
-        status: InviteStatus.EXPIRED,
-      });
-      throw new ForbiddenException('Expired invite');
-    }
-
-    const { user } = await this.authService.api.signUpEmail({
+    /**
+     * Through better-auth's own sign-up for the same reason `UsersService.create`
+     * is: a row written straight into `user` has no `account` row, so it has no
+     * password hash and could never sign in.
+     */
+    const { user } = await this.auth.api.signUpEmail({
       body: {
-        email: invite.email,
-        password: dto.password,
-        name: invite.email.split('@')[0],
+        email: row.email,
+        password: input.password,
+        name: input.name ?? row.email.split('@')[0] ?? row.email,
       },
     });
 
-    if (invite.role !== UserRole.USER) {
-      this.usersRepository.update(user.id, { role: invite.role });
+    // The `admin()` plugin's sign-up always applies its `defaultRole`, and its
+    // `setRole` endpoint needs an authenticated admin this service does not have.
+    if (row.role !== UserRole.USER) {
+      this.users.update(user.id, { role: row.role });
     }
-    this.invitesRepository.update(invite.id, {
-      status: InviteStatus.ACCEPTED,
-    });
+    this.repo.setStatus(row.id, InviteStatus.ACCEPTED);
 
-    const created = this.usersRepository.findById(user.id);
-    if (!created) {
-      throw new ForbiddenException('Failed to create user from invite');
+    const created = this.users.findById(user.id);
+    if (created === undefined) {
+      throw new HttpError(
+        HttpStatusCode.INTERNAL_SERVER_ERROR,
+        'The invited account was created but could not be read back',
+      );
     }
-    return created;
+
+    this.logger.info('invite accepted', { inviteId: row.id, userId: user.id });
+    return {
+      id: created.id,
+      email: created.email,
+      name: created.name,
+      role: created.role,
+      banned: created.banned,
+      emailVerified: created.emailVerified,
+      createdAt: created.createdAt.toISOString(),
+      updatedAt: created.updatedAt.toISOString(),
+    };
+  }
+
+  revoke(id: string): void {
+    if (!this.repo.deleteById(id)) {
+      throw new HttpError(HttpStatusCode.NOT_FOUND, `No invite with id ${id}`);
+    }
   }
 }

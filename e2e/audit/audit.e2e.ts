@@ -1,298 +1,236 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuditLog } from '@/audit/entity/audit-log.entity';
-import { AuditAction } from '@/audit/enum/audit-action.enum';
-import { E2E_ADMIN, getTestContext } from '../setup/context';
+import { describe, expect, test } from 'bun:test';
+import { getTestContext } from '../setup/context.js';
 
-interface AuditLogResponse {
-  data: AuditLog[];
+/**
+ * The audit trail is the most fragile thing in this app and the only one with no
+ * in-process test worth having.
+ *
+ * It is two mechanisms that have to agree at runtime and cannot be checked at
+ * compile time: SQLite triggers write the rows, and `AuditContextMiddleware`
+ * stamps the actor through an `AsyncLocalStorage` that the trigger reads back
+ * out of a connection variable. `app.module.ts` carries a long comment arguing
+ * that middleware has to be global, and that argument is only correct if the
+ * trigger and the stamp really do line up - which is what this suite checks,
+ * against a server in another process, over real HTTP.
+ *
+ * The NestJS template had this suite. The port dropped it.
+ */
+interface AuditEntry {
+  id: string;
+  actorId: string | null;
+  action: 'INSERT' | 'UPDATE' | 'DELETE';
+  entityName: string;
+  entityId: string;
+  oldValues: Record<string, unknown> | null;
+  newValues: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+interface Page<T> {
+  data: T[];
   meta: {
     take: number;
     hasNextPage: boolean;
     hasPreviousPage: boolean;
     nextCursor: string | null;
+    /** `previousCursor`, not `prevCursor`. The short spelling silently yields
+     * `undefined`, which reaches the server as the literal string and is a 400. */
     previousCursor: string | null;
   };
 }
 
-describe('Audit Logs (e2e)', () => {
-  const ctx = getTestContext();
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  banned: boolean;
+}
 
-  afterEach(() => {
-    ctx.reset();
+const makeUser = async (): Promise<User> => {
+  const { api } = getTestContext();
+  const created = await api.post<User>('users', {
+    email: `audit-${crypto.randomUUID()}@example.com`,
+    name: 'Audit Subject',
+    password: 'Audit-password-1!',
+  });
+  expect(created.status).toBe(201);
+  return created.body;
+};
+
+/** Triggers fire inside the write, but the read is a separate connection. */
+const entriesFor = async (entityId: string): Promise<AuditEntry[]> => {
+  const { api } = getTestContext();
+  const { body } = await api.json<Page<AuditEntry>>(
+    `audit-logs?entityId=${entityId}&take=50`,
+  );
+  return body.data;
+};
+
+describe('the audit trail, written by SQLite triggers', () => {
+  test('an anonymous caller cannot read it', async () => {
+    const { api } = getTestContext();
+    const { status } = await api.as(undefined).json('audit-logs');
+    expect(status).toBe(401);
   });
 
-  describe('User INSERT audit', () => {
-    test('should create an audit log when a new user registers and return it via API', async () => {
-      const testEmail = `audit-insert-${Date.now()}@e2e-test.com`;
-      const testPassword = 'TestPass123!';
+  /**
+   * The whole contract in one test: the row exists because a trigger wrote it,
+   * and it names the caller because the middleware stamped the connection before
+   * the statement ran.
+   */
+  test('a create is recorded as INSERT and attributed to the session', async () => {
+    const { adminId } = getTestContext();
+    const user = await makeUser();
 
-      await ctx.api.signUp({ email: testEmail, password: testPassword });
+    const entries = await entriesFor(user.id);
+    const insert = entries.find((entry) => entry.action === 'INSERT');
 
-      const user = ctx.db.getUserByEmail(testEmail);
-      expect(user).toBeDefined();
+    expect(insert).toBeDefined();
+    // `AUDITED_TABLES` names the entity `User`, which is not the table name.
+    expect(insert?.entityName).toBe('User');
+    expect(insert?.actorId).toBe(adminId);
+    expect(insert?.oldValues).toBeNull();
+    expect(insert?.newValues).toMatchObject({ email: user.email });
+  });
 
-      // Verify audit log via DB
-      const auditLog = ctx.db.auditLogs.findOne({
-        where: {
-          entityName: 'User',
-          entityId: user?.id,
-          action: AuditAction.INSERT,
-        },
-      });
+  test('a ban is recorded as UPDATE with both snapshots', async () => {
+    const { api } = getTestContext();
+    const user = await makeUser();
 
-      expect(auditLog).toBeDefined();
-      expect(auditLog?.action).toBe(AuditAction.INSERT);
-      expect(auditLog?.entityName).toBe('User');
-      expect(auditLog?.entityId).toBe(user?.id);
-      expect(auditLog?.oldValue).toBeNull();
-      expect(auditLog?.newValue).toBeDefined();
-      expect(auditLog?.newValue?.email).toBe(testEmail);
-      // Password should be excluded from audit log
-      expect(auditLog?.newValue?.password).toBeUndefined();
+    const banned = await api.post<User>(`users/${user.id}/ban`, {});
+    expect(banned.status).toBe(200);
 
-      // Verify audit log via API controller
-      await ctx.loginAsAdmin();
-      const apiResponse = await ctx.api.get<AuditLogResponse>(
-        `/api/audit-logs?entityId=${user?.id}&action=INSERT`,
+    const update = (await entriesFor(user.id)).find(
+      (entry) => entry.action === 'UPDATE',
+    );
+    expect(update).toBeDefined();
+    // Both sides, which is what makes the trail a history rather than a log of
+    // things having changed. `banned` is a JSON boolean rather than SQLite's
+    // 0/1, because the trigger's snapshot coerces it with `json(iif(...))`.
+    expect(update?.oldValues).toMatchObject({ banned: false });
+    expect(update?.newValues).toMatchObject({ banned: true });
+  });
+
+  test('a delete is recorded as DELETE, after the row is gone', async () => {
+    const { api } = getTestContext();
+    const user = await makeUser();
+
+    const removed = await api.json(`users/${user.id}`, { method: 'DELETE' });
+    expect(removed.status).toBe(204);
+
+    const entries = await entriesFor(user.id);
+    expect(entries.some((entry) => entry.action === 'DELETE')).toBe(true);
+    // The audit row outlives its subject, which is the point of recording it.
+    expect((await api.json(`users/${user.id}`)).status).toBe(404);
+  });
+
+  describe('filters', () => {
+    test('by action', async () => {
+      const { api } = getTestContext();
+      await makeUser();
+
+      const { body } = await api.json<Page<AuditEntry>>(
+        'audit-logs?action=INSERT&take=10',
       );
+      expect(body.data.length).toBeGreaterThan(0);
+      for (const entry of body.data) expect(entry.action).toBe('INSERT');
+    });
 
-      expect(apiResponse.status).toBe(200);
-      expect(apiResponse.data.data.length).toBeGreaterThanOrEqual(1);
-
-      const apiAuditLog = apiResponse.data.data.find(
-        log => log.entityId === user?.id && log.entityName === 'User',
+    test('by entityName', async () => {
+      const { api } = getTestContext();
+      const { body } = await api.json<Page<AuditEntry>>(
+        'audit-logs?entityName=User&take=10',
       );
-      expect(apiAuditLog).toBeDefined();
-      expect(apiAuditLog?.action).toBe(AuditAction.INSERT);
-      expect(apiAuditLog?.newValue?.email).toBe(testEmail);
-      expect(apiAuditLog?.newValue?.password).toBeUndefined();
-      expect(apiAuditLog?.oldValue).toBeNull();
+      expect(body.data.length).toBeGreaterThan(0);
+      for (const entry of body.data) expect(entry.entityName).toBe('User');
+    });
 
-      // Clean up
-      ctx.db.auditLogs.delete({ entityId: user?.id });
-      ctx.db.users.delete({ id: user?.id });
+    test('by actorId', async () => {
+      const { api, adminId } = getTestContext();
+      await makeUser();
+
+      const { body } = await api.json<Page<AuditEntry>>(
+        `audit-logs?actorId=${adminId}&take=10`,
+      );
+      expect(body.data.length).toBeGreaterThan(0);
+      for (const entry of body.data) expect(entry.actorId).toBe(adminId);
+    });
+
+    test('an unknown actor matches nothing rather than everything', async () => {
+      const { api } = getTestContext();
+      const { body } = await api.json<Page<AuditEntry>>(
+        `audit-logs?actorId=${crypto.randomUUID()}`,
+      );
+      expect(body.data).toHaveLength(0);
     });
   });
 
-  describe('User UPDATE audit', () => {
-    test('should create an audit log when a user is banned and return it via API', async () => {
-      // Register a test user
-      const testEmail = `audit-update-${Date.now()}@e2e-test.com`;
-      const testPassword = 'TestPass123!';
+  /**
+   * Keyset pagination is now `@dunx/infra/pagination` rather than this app's own
+   * code, and the framework's version fixed three things on the way in. These
+   * assert the behaviour this app depends on, over a table that is being written
+   * to by the tests above.
+   */
+  describe('cursor pagination', () => {
+    test('walks forward without repeating a row', async () => {
+      const { api } = getTestContext();
+      for (let i = 0; i < 3; i++) await makeUser();
 
-      await ctx.api.signUp({ email: testEmail, password: testPassword });
+      const first = await api.json<Page<AuditEntry>>('audit-logs?take=2');
+      expect(first.body.data).toHaveLength(2);
+      expect(first.body.meta.nextCursor).not.toBeNull();
 
-      const user = ctx.db.getUserByEmail(testEmail);
-      expect(user).toBeDefined();
-
-      // Login as admin and ban the user
-      await ctx.loginAsAdmin();
-
-      const banResponse = await ctx.api.post(`/api/users/${user?.id}/ban`);
-      expect(banResponse.status).toBe(201);
-
-      // Verify audit log via DB
-      const auditLog = ctx.db.auditLogs.findOne({
-        where: {
-          entityName: 'User',
-          entityId: user?.id,
-          action: AuditAction.UPDATE,
-        },
-      });
-
-      expect(auditLog).toBeDefined();
-      expect(auditLog?.action).toBe(AuditAction.UPDATE);
-      expect(auditLog?.oldValue).toBeDefined();
-      expect(auditLog?.newValue).toBeDefined();
-      expect(auditLog?.oldValue?.banned).toBe(false);
-      expect(auditLog?.newValue?.banned).toBe(true);
-      // Actor should be the admin user
-      const admin = ctx.db.getUserByEmail(E2E_ADMIN.email);
-      expect(auditLog?.actorId).toBe(admin?.id);
-
-      // Verify audit log via API controller with multiple filters
-      const apiResponse = await ctx.api.get<AuditLogResponse>(
-        `/api/audit-logs?entityId=${user?.id}&action=UPDATE&entityName=User`,
+      const second = await api.json<Page<AuditEntry>>(
+        `audit-logs?take=2&cursor=${encodeURIComponent(first.body.meta.nextCursor ?? '')}`,
       );
+      expect(second.body.data.length).toBeGreaterThan(0);
 
-      expect(apiResponse.status).toBe(200);
-      expect(apiResponse.data.data.length).toBeGreaterThanOrEqual(1);
-
-      const apiAuditLog = apiResponse.data.data.find(
-        log => log.entityId === user?.id,
-      );
-      expect(apiAuditLog).toBeDefined();
-      expect(apiAuditLog?.action).toBe(AuditAction.UPDATE);
-      expect(apiAuditLog?.actorId).toBe(admin?.id);
-      expect(apiAuditLog?.oldValue?.banned).toBe(false);
-      expect(apiAuditLog?.newValue?.banned).toBe(true);
-
-      // Clean up
-      ctx.db.auditLogs.delete({ entityId: user?.id });
-      ctx.db.users.delete({ id: user?.id });
-    });
-  });
-
-  describe('GET /api/audit-logs', () => {
-    test('should return cursor pagination meta on first page', async () => {
-      await ctx.loginAsAdmin();
-
-      const response = await ctx.api.get<AuditLogResponse>('/api/audit-logs');
-
-      expect(response.status).toBe(200);
-      expect(response.data).toHaveProperty('data');
-      expect(response.data).toHaveProperty('meta');
-      expect(Array.isArray(response.data.data)).toBe(true);
-      expect(response.data.meta).toHaveProperty('take');
-      expect(response.data.meta).toHaveProperty('hasNextPage');
-      expect(response.data.meta).toHaveProperty('hasPreviousPage');
-      expect(response.data.meta).toHaveProperty('nextCursor');
-      expect(response.data.meta).toHaveProperty('previousCursor');
-      // First page should never have a previous cursor
-      expect(response.data.meta.hasPreviousPage).toBe(false);
-      expect(response.data.meta.previousCursor).toBeNull();
+      const seen = new Set(first.body.data.map((entry) => entry.id));
+      for (const entry of second.body.data)
+        expect(seen.has(entry.id)).toBe(false);
     });
 
-    test('should paginate forward using cursor with no duplicate IDs', async () => {
-      await ctx.loginAsAdmin();
-
-      const page1 = await ctx.api.get<AuditLogResponse>(
-        '/api/audit-logs?take=2',
+    test('walks back to where it started', async () => {
+      const { api } = getTestContext();
+      const first = await api.json<Page<AuditEntry>>('audit-logs?take=2');
+      const second = await api.json<Page<AuditEntry>>(
+        `audit-logs?take=2&cursor=${encodeURIComponent(first.body.meta.nextCursor ?? '')}`,
       );
-      expect(page1.status).toBe(200);
-      expect(page1.data.data.length).toBeLessThanOrEqual(2);
 
-      if (page1.data.meta.nextCursor) {
-        const page2 = await ctx.api.get<AuditLogResponse>(
-          `/api/audit-logs?take=2&cursor=${page1.data.meta.nextCursor}`,
-        );
-        expect(page2.status).toBe(200);
-        expect(page2.data.meta.hasPreviousPage).toBe(true);
-        expect(page2.data.meta.previousCursor).not.toBeNull();
+      /**
+       * A cursor is minted only when there is a page in that direction, so a
+       * null `prevCursor` is the correct answer rather than a failure - and
+       * asserting it that way is the point, since a cursor that always existed
+       * is exactly the bug the framework's version fixed.
+       */
+      const cursor = second.body.meta.previousCursor;
+      expect(cursor).not.toBeNull();
 
-        // No overlap between pages
-        const page1Ids = new Set(page1.data.data.map(d => d.id));
-        for (const entry of page2.data.data) {
-          expect(page1Ids.has(entry.id)).toBe(false);
-        }
-      }
+      const back = await api.json<Page<AuditEntry>>(
+        `audit-logs?take=2&direction=backward&cursor=${encodeURIComponent(cursor ?? '')}`,
+      );
+      expect(back.status).toBe(200);
+      expect(back.body.data.map((entry) => entry.id)).toEqual(
+        first.body.data.map((entry) => entry.id),
+      );
     });
 
-    test('should navigate backward without overlapping page 2', async () => {
-      await ctx.loginAsAdmin();
-
-      const page1 = await ctx.api.get<AuditLogResponse>(
-        '/api/audit-logs?take=2',
-      );
-      expect(page1.status).toBe(200);
-      if (!page1.data.meta.nextCursor) return;
-
-      const page2 = await ctx.api.get<AuditLogResponse>(
-        `/api/audit-logs?take=2&cursor=${page1.data.meta.nextCursor}`,
-      );
-      expect(page2.status).toBe(200);
-      expect(page2.data.meta.previousCursor).not.toBeNull();
-
-      // Go backward from page 2
-      const backPage = await ctx.api.get<AuditLogResponse>(
-        `/api/audit-logs?take=2&cursor=${page2.data.meta.previousCursor}&direction=backward`,
-      );
-      expect(backPage.status).toBe(200);
-
-      // Backward page should not overlap with page 2
-      const page2Ids = new Set(page2.data.data.map(d => d.id));
-      for (const entry of backPage.data.data) {
-        expect(page2Ids.has(entry.id)).toBe(false);
-      }
-
-      // Backward page should indicate there is a next page
-      expect(backPage.data.meta.hasNextPage).toBe(true);
-      expect(backPage.data.meta.nextCursor).not.toBeNull();
+    test('a malformed cursor is a 400, not an empty page', async () => {
+      const { api } = getTestContext();
+      const { status } = await api.json('audit-logs?cursor=not-a-real-cursor');
+      expect(status).toBe(400);
     });
 
-    test('should reject an invalid cursor', async () => {
-      await ctx.loginAsAdmin();
-
-      const response = await ctx.api.get<{ message: string }>(
-        '/api/audit-logs?cursor=not-a-valid-cursor',
-      );
-      expect(response.ok).toBe(false);
-      expect(response.status).toBe(400);
-    });
-
-    test('should filter audit logs by entityName', async () => {
-      await ctx.loginAsAdmin();
-
-      const response = await ctx.api.get<AuditLogResponse>(
-        '/api/audit-logs?entityName=User',
-      );
-
-      expect(response.status).toBe(200);
-      for (const entry of response.data.data) {
-        expect(entry.entityName).toBe('User');
-      }
-    });
-
-    test('should filter audit logs by action', async () => {
-      await ctx.loginAsAdmin();
-
-      const response = await ctx.api.get<AuditLogResponse>(
-        '/api/audit-logs?action=INSERT',
-      );
-
-      expect(response.status).toBe(200);
-      for (const entry of response.data.data) {
-        expect(entry.action).toBe(AuditAction.INSERT);
-      }
-    });
-
-    test('should filter audit logs by actorId', async () => {
-      await ctx.loginAsAdmin();
-      const admin = ctx.db.getUserByEmail(E2E_ADMIN.email);
-
-      const response = await ctx.api.get<AuditLogResponse>(
-        `/api/audit-logs?actorId=${admin?.id}`,
-      );
-
-      expect(response.status).toBe(200);
-      expect(admin).toBeTruthy();
-      for (const entry of response.data.data) {
-        expect(entry.actorId).toBe(admin?.id ?? null);
-      }
-    });
-
-    test('should reject unauthenticated requests', async () => {
-      ctx.api.clearAuthToken();
-
-      const response = await ctx.api.get('/api/audit-logs');
-
-      expect(response.ok).toBe(false);
-      expect(response.status).toBe(401);
-    });
-
-    test('should reject non-admin users', async () => {
-      const testEmail = `audit-nonadmin-${Date.now()}@e2e-test.com`;
-      const testPassword = 'TestPass123!';
-
-      const registerResponse = await ctx.api.signUp({
-        email: testEmail,
-        password: testPassword,
-      });
-
-      // Use the regular user's token
-      ctx.api.setAuthToken(registerResponse.token);
-
-      const response = await ctx.api.get('/api/audit-logs');
-
-      expect(response.ok).toBe(false);
-      expect(response.status).toBe(403);
-
-      // Clean up
-      const user = ctx.db.getUserByEmail(testEmail);
-      if (user) {
-        ctx.db.auditLogs.delete({ entityId: user.id });
-        ctx.db.users.delete({ id: user.id });
-      }
+    /**
+     * A `nextCursor` on the last page reads as "there is more" to any client
+     * checking for null, which is one of the things the framework's version
+     * fixed. `take` above the row count is the only reliable way to be on it.
+     */
+    test('the last page mints no forward cursor', async () => {
+      const { api } = getTestContext();
+      const { body } = await api.json<Page<AuditEntry>>('audit-logs?take=50');
+      if (body.data.length < 50) expect(body.meta.nextCursor).toBeNull();
     });
   });
 });

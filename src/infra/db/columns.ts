@@ -1,29 +1,27 @@
 import { integer, text } from 'drizzle-orm/sqlite-core';
 
 /**
- * Shared SQLite column builders. Column names are derived from the property
- * key via the drizzle instance's `casing: 'snake_case'` setting, so callers
- * pass no name argument.
+ * Column names are spelled out rather than derived. drizzle's `casing:
+ * 'snake_case'` is set on the `drizzle()` call, and `@dunx/infra`'s
+ * `SqliteOptions` forwards only `schema` to it, so the convention is
+ * unreachable from inside the container. Explicit names are what keep the
+ * runtime handle and the drizzle-kit output agreeing.
  */
-
-/** UUID primary key, generated application-side (crypto.randomUUID). */
 export const uuidPk = () =>
-  text()
+  text('id')
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID());
 
-/** Millisecond-precision timestamp stored as an integer, returned as a Date. */
-export const timestampMs = () => integer({ mode: 'timestamp_ms' });
+export const timestampMs = (name: string) =>
+  integer(name, { mode: 'timestamp_ms' });
 
-/** created_at: set once on insert. */
 export const createdAt = () =>
-  timestampMs()
+  timestampMs('created_at')
     .notNull()
     .$defaultFn(() => new Date());
 
-/** updated_at: set on insert, bumped on every drizzle update. */
 export const updatedAt = () =>
-  timestampMs()
+  timestampMs('updated_at')
     .notNull()
     .$defaultFn(() => new Date())
     .$onUpdate(() => new Date());

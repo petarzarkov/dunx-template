@@ -1,20 +1,20 @@
-/**
- * Bun preload script for E2E tests
- * Environment is loaded via bun --env-file flag in package.json
- */
 import { afterAll, beforeAll } from 'bun:test';
-import { destroyTestContext, initializeTestContext } from './context';
+import { destroyTestContext, initializeTestContext } from './context.js';
 
-// Global setup - runs once before all tests
+/**
+ * `bun test --preload` registers these once for the whole run, so the server is
+ * started and torn down exactly once no matter how many suites there are.
+ *
+ * The explicit timeouts are load-bearing. Bun's default for a hook is 5 s, and
+ * `waitForReady` is allowed 15 s, so on a cold CI runner the hook was killed
+ * before the readiness loop had given up - which surfaced as every test failing
+ * with "test context not initialized" and one `(unnamed)` failure at exactly
+ * 5000 ms, naming nothing.
+ */
 beforeAll(async () => {
-  console.log('🚀 E2E Tests: Initializing test context...');
   await initializeTestContext();
-  console.log('✅ E2E Tests: Test context ready');
-});
+}, 60_000);
 
-// Global teardown - runs once after all tests
 afterAll(async () => {
-  console.log('🧹 E2E Tests: Cleaning up...');
   await destroyTestContext();
-  console.log('✅ E2E Tests: Cleanup complete');
-});
+}, 30_000);

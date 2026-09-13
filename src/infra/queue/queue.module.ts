@@ -1,69 +1,84 @@
-import { BullModule } from '@nestjs/bullmq';
-import { Global, Module } from '@nestjs/common';
-import { DiscoveryModule } from '@nestjs/core';
-import { AppConfigService } from '@/config/services/app.config.service';
-import { EVENTS } from '@/notifications/events/events';
-import { JobDispatcherService } from './services/job-dispatcher.service';
+import type { DynamicModule } from '@dunx/core';
+import { QueueModule } from '@dunx/infra/queue';
+import { AppConfigService } from '../../config/app.config.service.js';
+import { QueueUnavailableMiddleware } from './queue-unavailable.middleware.js';
+import { QueuesController } from './queues.controller.js';
 
-@Global()
-@Module({
-  imports: [
-    DiscoveryModule,
-    BullModule.forRootAsync({
-      inject: [AppConfigService],
-      useFactory: (configService: AppConfigService) => {
-        const redisConfig = configService.getOrThrow('redis');
+export interface QueueModuleOptions {
+  /** `false` in the worker process, which has no HTTP routes. */
+  readonly controllers?: boolean;
+}
 
+/**
+ * `QueueModule.forRoot` binds the **publish** side only - `QueueOptions`,
+ * `QueueConnection` and `JobPublisher` - so importing it never opens a worker and a
+ * web process cannot start consuming by accident. The consuming half is
+ * `WorkerFactory`, in src/worker.ts.
+ *
+ * Imported by both processes, which is the whole shape of a queue: they agree on
+ * this module and on nothing else.
+ */
+export class QueuesModule {
+  static forRoot(options: QueueModuleOptions = {}): DynamicModule {
+    const queues = QueueModule.forRootAsync({
+      useFactory: (config: AppConfigService) => {
+        const { url, connectTimeoutMs } = config.get('redis');
+        const queue = config.get('queue');
         return {
+          ...(url === undefined ? {} : { url }),
+          prefix: queue.prefix,
+          // `maxRetries: 0` is what makes an enqueue against a down Redis
+          // answer in milliseconds instead of hanging, and what lets the
+          // process exit. It is also `@dunx/infra/queue`'s own default; it is
+          // spelled out because `connectionTimeout` next to it is not.
           connection: {
-            host: redisConfig.host,
-            port: redisConfig.port,
-            password: redisConfig.password,
-            db: redisConfig.db,
+            connectionTimeout: connectTimeoutMs,
+            maxRetries: 0,
           },
-        };
-      },
-    }),
-    BullModule.registerQueueAsync({
-      name: EVENTS.QUEUES.NOTIFICATIONS_EVENTS,
-      inject: [AppConfigService],
-      useFactory: (configService: AppConfigService) => {
-        const redisConfig = configService.getOrThrow('redis');
-
-        return {
           defaultJobOptions: {
-            attempts: redisConfig.queues.maxRetries,
-            backoff: {
-              type: 'exponential',
-              delay: redisConfig.queues.retryDelayMs,
-            },
+            attempts: queue.maxRetries,
+            backoff: { type: 'exponential', delay: queue.retryDelayMs },
             removeOnComplete: { count: 100 },
             removeOnFail: { count: 500 },
           },
-        };
-      },
-    }),
-    BullModule.registerQueueAsync({
-      name: EVENTS.QUEUES.BACKGROUND_JOBS,
-      inject: [AppConfigService],
-      useFactory: (configService: AppConfigService) => {
-        const redisConfig = configService.getOrThrow('redis');
-
-        return {
-          defaultJobOptions: {
-            attempts: redisConfig.queues.maxRetries,
-            backoff: {
-              type: 'exponential',
-              delay: redisConfig.queues.retryDelayMs,
+          worker: {
+            concurrency: queue.concurrency,
+            limiter: {
+              max: queue.rateLimitMax,
+              duration: queue.rateLimitDurationMs,
             },
-            removeOnComplete: { count: 100 },
-            removeOnFail: { count: 500 },
           },
+          // Not a bullmq feature: bullmq's `lockDuration` answers "did the
+          // worker die", not "is this handler stuck".
+          jobTimeoutMs: queue.jobTimeoutMs,
         };
       },
-    }),
-  ],
-  providers: [JobDispatcherService],
-  exports: [JobDispatcherService, BullModule],
-})
-export class QueueModule {}
+      inject: [AppConfigService] as const,
+    });
+
+    return {
+      module: QueuesModule,
+      global: true,
+      imports: [queues],
+      // `JobPublisher` and `QueueOptions`, through the module that binds them.
+      // Every feature that enqueues reads this, which is what global is for.
+      exports: [queues],
+      // Not in the worker: it has no HTTP server, so there are no routes to serve,
+      // and therefore nothing for the middleware to wrap either.
+      ...(options.controllers === false
+        ? {}
+        : {
+            controllers: [QueuesController],
+            /**
+             * The module-scoped filter, covering exactly the routes
+             * `QueuesController` declares. It replaced a private `degrades()`
+             * helper the controller wrapped around all five route bodies - which is
+             * a per-controller `@Catch` filter written by hand, and the one thing
+             * `HttpOptions.middleware` could not express.
+             */
+            middleware: [QueueUnavailableMiddleware],
+            providers: [QueueUnavailableMiddleware],
+          }),
+    };
+  }
+}

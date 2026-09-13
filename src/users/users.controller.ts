@@ -1,102 +1,100 @@
 import {
-  Body,
   Controller,
-  ForbiddenException,
+  Delete,
   Get,
+  HttpError,
+  HttpStatusCode,
   Patch,
   Post,
-  Query,
-} from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { ApiAuth } from '@/core/decorators/api-auth.decorator';
-import { CurrentUser } from '@/core/decorators/current-user.decorator';
-import { Roles } from '@/core/decorators/roles.decorator';
+  Roles,
+  type Input,
+} from '@dunx/http';
+import { ApiDoc } from '@dunx/openapi';
+import type { Page } from '@dunx/infra/pagination';
 import {
-  ApiUuidParam,
-  UuidParam,
-} from '@/core/decorators/uuid-param.decorator';
-import { PageDto } from '@/core/pagination/dto/page.dto';
-import { PaginatedDto } from '@/core/pagination/dto/paginated.dto';
-import { GetUsersQueryDto, UpdateUserDto } from '@/users/dto/user.dto';
-import { SanitizedUser } from '@/users/entity/user.entity';
-import { UserRole } from '@/users/enum/user-role.enum';
-import { UsersService } from './services/users.service';
+  createUser,
+  deleteUser,
+  listUsers,
+  oneUser,
+  setUserBan,
+  updateUser,
+  type SanitizedUser,
+} from './dto/user.dto.js';
+import { CurrentUser } from '../auth/services/current-user.service.js';
+import { UserRole } from './schema/user.schema.js';
+import { UsersService } from './services/users.service.js';
 
-@ApiTags('users')
+/**
+ * NestJS reads the body with `@Body()` and the params with `@Param()`. There are
+ * no parameter decorators in the TC39 proposal, so dunx hands the handler one
+ * `input` argument whose shape comes from the route's own schemas. The schemas
+ * are declared once and both the validation and the type follow from them.
+ */
+@ApiDoc({ tags: ['users'], description: 'Read and administer user accounts.' })
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly caller: CurrentUser,
+  ) {}
 
-  @Get()
+  @ApiDoc({ tags: ['users'], summary: 'List users, keyset paginated' })
   @Roles(UserRole.ADMIN, UserRole.USER)
-  @ApiAuth()
-  @ApiOperation({ summary: 'Get users list' })
-  @ApiOkResponse({
-    description: 'A paginated list of users.',
-    type: PaginatedDto(SanitizedUser),
-  })
-  async getUsers(
-    @CurrentUser() _currentUser: SanitizedUser,
-    @Query() queryDto: GetUsersQueryDto,
-  ): Promise<PageDto<SanitizedUser>> {
-    return this.usersService.getUsersPaginated(queryDto);
+  @Get('/', listUsers)
+  list(input: Input<typeof listUsers>): Page<SanitizedUser> {
+    return this.users.list(input.query);
   }
 
-  @Get('me')
-  @ApiAuth()
-  @ApiOperation({ summary: 'Get current user profile' })
-  @ApiOkResponse({ type: SanitizedUser })
-  async getMe(
-    @CurrentUser() user: SanitizedUser,
-  ): Promise<SanitizedUser | null> {
-    return this.usersService.findById(user.id);
+  @ApiDoc({ tags: ['users'], summary: 'Fetch one user by id' })
+  @Roles(UserRole.ADMIN, UserRole.USER)
+  @Get('/:userId', oneUser)
+  one(input: Input<typeof oneUser>): SanitizedUser {
+    return this.users.findById(input.params.userId);
   }
 
-  @Post(':userId/ban')
+  @ApiDoc({ tags: ['users'], summary: 'Create a user' })
   @Roles(UserRole.ADMIN)
-  @ApiAuth()
-  @ApiOperation({
-    summary:
-      'Ban a given user so it can no longer use the platform until unbanned',
+  @Post('/', createUser)
+  create(input: Input<typeof createUser>): Promise<SanitizedUser> {
+    return this.users.create(input.body);
+  }
+
+  @ApiDoc({ tags: ['users'], summary: 'Patch a user' })
+  @Roles(UserRole.ADMIN)
+  @Patch('/:userId', updateUser)
+  update(input: Input<typeof updateUser>): SanitizedUser {
+    return this.users.update(input.params.userId, input.body);
+  }
+
+  @ApiDoc({
+    tags: ['users'],
+    summary: 'Ban a user so it can no longer use the platform',
   })
-  @ApiUuidParam({ name: 'userId', description: 'User identifier' })
-  @ApiOkResponse({ type: SanitizedUser })
-  async banUser(
-    @CurrentUser() user: SanitizedUser,
-    @UuidParam({ name: 'userId' }) userId: string,
-  ): Promise<SanitizedUser> {
-    if (user.id === userId) {
-      throw new ForbiddenException('You cannot ban your own account');
+  @Roles(UserRole.ADMIN)
+  @Post('/:userId/ban', setUserBan)
+  ban(input: Input<typeof setUserBan>): Promise<SanitizedUser> {
+    // The caller comes out of `AuthContext` rather than off a header, so it is the
+    // session the guard resolved and not something the client asserted.
+    if (this.caller.require().id === input.params.userId) {
+      throw new HttpError(
+        HttpStatusCode.FORBIDDEN,
+        'You cannot ban your own account',
+      );
     }
-    return this.usersService.updateUser(userId, { banned: true });
+    return this.users.setBanned(input.params.userId, true);
   }
 
-  @Post(':userId/unban')
+  @ApiDoc({ tags: ['users'], summary: 'Lift a ban' })
   @Roles(UserRole.ADMIN)
-  @ApiAuth()
-  @ApiOperation({
-    summary: 'Remove a user ban so it is able to use the platform again',
-  })
-  @ApiUuidParam({ name: 'userId', description: 'User identifier' })
-  @ApiOkResponse({ type: SanitizedUser })
-  async unbanUser(
-    @UuidParam({ name: 'userId' }) userId: string,
-  ): Promise<SanitizedUser> {
-    return this.usersService.updateUser(userId, { banned: false });
+  @Post('/:userId/unban', setUserBan)
+  unban(input: Input<typeof setUserBan>): Promise<SanitizedUser> {
+    return this.users.setBanned(input.params.userId, false);
   }
 
-  @Patch(':userId')
+  @ApiDoc({ tags: ['users'], summary: 'Delete a user' })
   @Roles(UserRole.ADMIN)
-  @ApiAuth()
-  @ApiOperation({
-    summary: 'Update user properties',
-  })
-  @ApiUuidParam({ name: 'userId', description: 'User identifier' })
-  @ApiOkResponse({ type: SanitizedUser })
-  async updateUser(
-    @UuidParam({ name: 'userId' }) userId: string,
-    @Body() updateUserDto: UpdateUserDto,
-  ): Promise<SanitizedUser> {
-    return this.usersService.updateUser(userId, updateUserDto);
+  @Delete('/:userId', deleteUser)
+  remove(input: Input<typeof deleteUser>): void {
+    this.users.remove(input.params.userId);
   }
 }

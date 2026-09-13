@@ -1,181 +1,266 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { UserRole } from '@/users/enum/user-role.enum';
-import { E2E } from '../constants';
-import { E2E_ADMIN, getTestContext } from '../setup/context';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import type { Subprocess } from 'bun';
+import { APP_DIR, drain, getTestContext, serverEnv } from '../setup/context.js';
+import { frame, open } from '../utils/ws-client.js';
 
-describe('Auth (e2e)', () => {
-  const ctx = getTestContext();
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+}
 
-  afterEach(() => {
-    ctx.reset();
+interface Caller {
+  id: string;
+  email: string;
+  roles: string[];
+}
+
+/**
+ * Whether a broker is reachable, probed at **module scope**.
+ *
+ * `test.skipIf` is evaluated when a test is registered, which happens while this
+ * file is loaded and before any hook runs - so a flag set in `beforeAll` is
+ * still `false` there and every guarded test would skip while the suite reported
+ * success. That is why this cannot ask the app through `getTestContext`, which
+ * only exists after the preload's own hook.
+ */
+const queueUp = await (async (): Promise<boolean> => {
+  const redis = new Bun.RedisClient(
+    Bun.env['REDIS_URL'] ?? 'redis://127.0.0.1:6379',
+    { maxRetries: 0, connectionTimeout: 500 },
+  );
+  try {
+    await redis.get(`e2e-probe:${crypto.randomUUID()}`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    redis.close();
+  }
+})();
+
+let worker: Subprocess | undefined;
+let workerOutput: () => string = () => '';
+
+beforeAll(async () => {
+  if (!queueUp) return;
+
+  /**
+   * The round trip needs something to consume the job, and a worker is its own
+   * container in its own process - which is the whole point of the test.
+   *
+   * `serverEnv()` rather than `process.env`: the two processes have to agree on
+   * the queue prefix, the relay channel and the broker, and the defaults that
+   * make them agree live in the setup file rather than the environment.
+   */
+  worker = Bun.spawn(['bun', 'src/worker.ts'], {
+    cwd: APP_DIR,
+    env: serverEnv(),
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
 
-  describe('Login', () => {
-    test('should login with valid credentials', async () => {
-      // Wait for throttle window to reset (short throttle: 10 req/1s)
-      await Bun.sleep(1100);
-      const result = await ctx.loginAsAdmin();
+  // Drained, or the pipe fills and blocks the child. It is also the only way to
+  // find out why a worker that failed to boot never consumed anything.
+  const out = drain(worker.stdout as ReadableStream<Uint8Array> | undefined);
+  const err = drain(worker.stderr as ReadableStream<Uint8Array> | undefined);
+  workerOutput = () => `${out()}${err()}`;
 
-      expect(result.token).toBeDefined();
-      expect(typeof result.token).toBe('string');
+  await Bun.sleep(2500);
+}, 30_000);
+
+afterAll(() => {
+  worker?.kill();
+});
+
+describe('authentication against a live server', () => {
+  test('a valid credential returns a session token', async () => {
+    const { api } = getTestContext();
+    const response = await api.as(undefined).raw('auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'admin@e2e-test.com',
+        password: 'e2e-admin-password',
+      }),
     });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('set-auth-token')).not.toBeNull();
+  });
 
-    test('should reject invalid credentials', async () => {
-      await Bun.sleep(1100);
-      const response = await ctx.api.post('/api/auth/sign-in/email', {
-        email: 'nonexistent@test.com',
-        password: 'wrongpassword',
+  test('a wrong password is refused', async () => {
+    const { api } = getTestContext();
+    const response = await api.as(undefined).raw('auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'admin@e2e-test.com',
+        password: 'not-the-password',
+      }),
+    });
+    expect(response.status).toBe(401);
+  });
+
+  test('the profile route reports the session the guard resolved', async () => {
+    const { api, adminId } = getTestContext();
+    const { status, body } = await api.json<Caller>('profile');
+    expect(status).toBe(200);
+    expect(body.id).toBe(adminId);
+    expect(body.roles).toContain('admin');
+  });
+
+  test('an unauthenticated caller gets 401, and a public route still answers', async () => {
+    const { api } = getTestContext();
+    expect((await api.as(undefined).json('profile')).status).toBe(401);
+
+    const anonymous = await api
+      .as(undefined)
+      .json<{ caller: string | null }>('profile/anonymous');
+    expect(anonymous.status).toBe(200);
+    expect(anonymous.body.caller).toBeNull();
+  });
+
+  /**
+   * The test the port dropped, and the one worth having: signing out has to
+   * actually invalidate the token, not just clear a cookie the test client does
+   * not have. With `secondaryStorage` configured the live session is in Redis
+   * and the table is the durable record, so a sign-out that only deleted one of
+   * the two would still answer 200 here and leave the token working.
+   */
+  test('signing out invalidates the token it was issued for', async () => {
+    const { api } = getTestContext();
+    const email = `signout-${crypto.randomUUID()}@example.com`;
+    const password = 'Signout-password-1!';
+
+    const created = await api.post<User>('users', {
+      email,
+      name: 'Sign Out',
+      password,
+    });
+    expect(created.status).toBe(201);
+
+    const signedIn = await api.as(undefined).raw('auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    const token = signedIn.headers.get('set-auth-token');
+    expect(token).not.toBeNull();
+
+    const session = api.as(token ?? '');
+    expect((await session.json('profile')).status).toBe(200);
+
+    const out = await session.raw('auth/sign-out', { method: 'POST' });
+    expect(out.ok).toBe(true);
+
+    expect((await session.json('profile')).status).toBe(401);
+  });
+
+  test('a registered account can sign in immediately', async () => {
+    const { api } = getTestContext();
+    const email = `register-${crypto.randomUUID()}@example.com`;
+
+    const registered = await api.as(undefined).raw('auth/sign-up/email', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        password: 'Register-password-1!',
+        name: 'Registered',
+      }),
+    });
+    expect(registered.ok).toBe(true);
+
+    const signedIn = await api.as(undefined).raw('auth/sign-in/email', {
+      method: 'POST',
+      body: JSON.stringify({ email, password: 'Register-password-1!' }),
+    });
+    expect(signedIn.status).toBe(200);
+  });
+});
+
+/**
+ * The single most valuable end-to-end assertion in this repo, and the other one
+ * the port dropped.
+ *
+ * It crosses every process boundary the app has in one test: an HTTP request in
+ * the web process writes a row and publishes a job, a **worker in a second
+ * process** consumes it, and the frame it publishes comes back to a websocket
+ * held by the first. Each half is tested on its own elsewhere; only this proves
+ * they are connected.
+ *
+ * The worker has no `PubSub` - `WorkerFactory` builds a container with no server
+ * in it - so the frame travels over the relay channel, which is the path that
+ * has no unit test at all.
+ */
+describe('a job published by the web process reaches a socket', () => {
+  test.skipIf(!queueUp)(
+    'creating a user notifies the admin room from the worker',
+    async () => {
+      const { api, origin, adminToken } = getTestContext();
+
+      const socket = await open(origin, adminToken);
+      await frame(socket, 'connected');
+
+      /**
+       * Every address this test created, matched against rather than the last
+       * one, because the trigger is retried below.
+       *
+       * Matching on content at all is because the queue outlives the process
+       * that filled it: a rerun against the same broker delivers a leftover
+       * notification for somebody else's job first.
+       */
+      const mine = new Set<string>();
+      const notification = frame(socket, 'notification', {
+        timeoutMs: 25_000,
+        where: (received) => {
+          const email = (received.data as { payload?: { email?: string } })
+            .payload?.email;
+          return email !== undefined && mine.has(email);
+        },
       });
 
-      expect(response.ok).toBe(false);
-      // API returns 400 for validation errors or 401 for auth failures
-      expect([400, 401]).toContain(response.status);
-    });
-  });
+      /**
+       * Published more than once, spaced out.
+       *
+       * The web node subscribes to the relay channel at boot with
+       * `maxRetries: 0`, and recovers from a failed subscribe on a bounded
+       * timer - so a single publish can land in the gap and reach nobody. One
+       * retry is the difference between asserting the round trip and asserting
+       * that the relay happened to be warm.
+       */
+      const publish = async (): Promise<void> => {
+        const email = `roundtrip-${crypto.randomUUID()}@example.com`;
+        mine.add(email);
+        const created = await api.post<User>('users', {
+          email,
+          name: 'Round Trip',
+          password: 'Roundtrip-password-1!',
+        });
+        expect(created.status).toBe(201);
+      };
 
-  describe('User Profile', () => {
-    test('should get current user profile when authenticated', async () => {
-      await Bun.sleep(1100);
-      await ctx.loginAsAdmin();
+      await publish();
+      const retry = setInterval(() => void publish(), 6000);
 
-      const profile = await ctx.api.getMe();
+      // Without the worker's own output a timeout here says only "no frame",
+      // which is the one thing already known.
+      const received = await notification
+        .catch((error: Error) => {
+          throw new Error(
+            `${error.message}\nworker output:\n${workerOutput()}`,
+          );
+        })
+        .finally(() => {
+          clearInterval(retry);
+        });
 
-      expect(profile.id).toBeDefined();
-      expect(profile.email).toBe(E2E_ADMIN.email);
-      expect(profile.role).toBe(UserRole.ADMIN);
-    });
+      expect(received.data).toMatchObject({ event: 'user.registered' });
+      expect(
+        mine.has(
+          (received.data as { payload: { email: string } }).payload.email,
+        ),
+      ).toBe(true);
 
-    test('should reject unauthenticated profile request', async () => {
-      ctx.api.clearAuthToken();
-
-      const response = await ctx.api.get('/api/users/me');
-
-      expect(response.ok).toBe(false);
-      expect(response.status).toBe(401);
-    });
-  });
-
-  describe('Logout', () => {
-    test('should invalidate the session on sign-out', async () => {
-      await Bun.sleep(1100);
-      const { token } = await ctx.loginAsAdmin();
-
-      // Session resolves before sign-out
-      const before = await ctx.api.get('/api/users/me');
-      expect(before.status).toBe(200);
-
-      // Better Auth native sign-out — deletes the session from Redis
-      const result = await ctx.api.logout();
-      expect(result.success).toBe(true);
-
-      // The same bearer token no longer resolves to a session
-      const after = await ctx.api.get('/api/users/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      expect(after.ok).toBe(false);
-      expect(after.status).toBe(401);
-    });
-  });
-
-  describe('WebSocket Connection', () => {
-    test('should connect to WebSocket and receive connected event', async () => {
-      await Bun.sleep(1100);
-      const { token } = await ctx.loginAsAdmin();
-
-      ctx.ws.connect(token, E2E.API_URL);
-      const connectedEvent = await ctx.ws.waitForConnected(10000);
-
-      expect(connectedEvent).toBeDefined();
-      expect(connectedEvent.message).toContain('Connected');
-      expect(connectedEvent.payload.email).toBe(E2E_ADMIN.email);
-    });
-  });
-
-  describe('Database Direct Access', () => {
-    test('should query admin user directly from database', async () => {
-      const user = ctx.db.getUserByEmail(E2E_ADMIN.email);
-
-      expect(user).toBeDefined();
-      expect(user?.email).toBe(E2E_ADMIN.email);
-      expect(user?.role).toBe(UserRole.ADMIN);
-      expect(user?.banned).toBe(false);
-    });
-  });
-
-  describe('User Registration', () => {
-    test('should register new user successfully', async () => {
-      const testEmail = `test-${Date.now()}@e2e-test.com`;
-      const testPassword = 'TestPass123!';
-
-      const response = await ctx.api.post<{ token: string }>(
-        '/api/auth/sign-up/email',
-        {
-          email: testEmail,
-          password: testPassword,
-          name: 'Test User',
-        },
-      );
-
-      expect(response.status).toBe(200);
-      expect(response.data.token).toBeDefined();
-
-      // Verify user was created in DB
-      const user = ctx.db.getUserByEmail(testEmail);
-      expect(user).toBeDefined();
-      expect(user?.email).toBe(testEmail);
-      expect(user?.role).toBe(UserRole.USER);
-
-      // Clean up - delete the test user
-      if (user) {
-        ctx.db.users.delete({ id: user.id });
-      }
-    });
-
-    test('should trigger the job queue and receive WebSocket notification', async () => {
-      // Wait for throttle window to reset (short throttle: 10 req/1s)
-      await Bun.sleep(1100);
-
-      // Connect admin WebSocket to listen for notifications
-      const { token } = await ctx.loginAsAdmin();
-      ctx.ws.connect(token, E2E.API_URL);
-      await ctx.ws.waitForConnected(10000);
-
-      // Register a new user - this should enqueue a notification job
-      const testEmail = `test-streams-${Date.now()}@e2e-test.com`;
-      const testPassword = 'TestPass123!';
-
-      const response = await ctx.api.post<{ token: string }>(
-        '/api/auth/sign-up/email',
-        {
-          email: testEmail,
-          password: testPassword,
-          name: 'Test User',
-        },
-      );
-
-      expect(response.status).toBe(200);
-
-      // Wait for the WebSocket notification driven by the job queue
-      // Flow: Register → JobPublisherService → bullmq worker → NotificationHandler → EventsGateway emits over WebSocket
-      const notification = await ctx.ws.waitForEvent<{
-        event: string;
-        payload: { email: string; name: string; type: string };
-      }>('notification', 3000, data => data.payload.email === testEmail); // 3s timeout
-
-      expect(notification).toBeDefined();
-      expect(notification.event).toBe('user.registered');
-      expect(notification.payload.email).toBe(testEmail);
-      expect(notification.payload.type).toBe('direct');
-
-      // Verify user was created in DB
-      const user = ctx.db.getUserByEmail(testEmail);
-      expect(user).toBeDefined();
-      expect(user?.email).toBe(testEmail);
-
-      // Clean up - delete the test user
-      if (user) {
-        ctx.db.users.delete({ id: user.id });
-      }
-    }, 10000); // 10s test timeout
-  });
+      socket.close();
+    },
+    30_000,
+  );
 });

@@ -1,154 +1,51 @@
-import { SanitizedUser } from '@/users/entity/user.entity';
-import { E2E } from '../constants';
-
-/** Better Auth sign-in / sign-up response body (bearer plugin returns `token`). */
-export interface AuthResult {
-  token: string;
-  user: SanitizedUser;
-}
-
-type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
-
-interface RequestOptions {
-  body?: unknown;
-  headers?: Record<string, string>;
-}
-
-interface ApiResponse<T = unknown> {
-  data: T;
-  status: number;
-  ok: boolean;
+export interface ApiResponse<T> {
+  readonly status: number;
+  readonly headers: Headers;
+  readonly body: T;
 }
 
 /**
- * HTTP client for E2E API testing
+ * Authenticates the way any non-browser client does: the bearer token better-auth's
+ * `bearer()` plugin hands back from a sign-in, in an `Authorization` header. There
+ * is no test-only door and no `x-actor-id` header any more - the suite goes through
+ * the same `SessionGuard` as production.
  */
 export class ApiClient {
-  private authToken: string | null = null;
-  private readonly baseUrl: string;
+  constructor(
+    private readonly baseUrl: string,
+    private readonly token: string | undefined,
+  ) {}
 
-  constructor(baseUrl = E2E.API_URL) {
-    this.baseUrl = baseUrl;
+  as(token: string | undefined): ApiClient {
+    return new ApiClient(this.baseUrl, token);
   }
 
-  setAuthToken(token: string | null): void {
-    this.authToken = token;
+  url(path: string): string {
+    return `${this.baseUrl}/${path.replace(/^\//, '')}`;
   }
 
-  clearAuthToken(): void {
-    this.authToken = null;
-  }
-
-  private async request<T>(
-    method: HttpMethod,
-    path: string,
-    options: RequestOptions = {},
-  ): Promise<ApiResponse<T>> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    };
-
-    if (this.authToken) {
-      headers.Authorization = `Bearer ${this.authToken}`;
+  async raw(path: string, init: RequestInit = {}): Promise<Response> {
+    const headers = new Headers(init.headers);
+    if (this.token !== undefined) {
+      headers.set('authorization', `Bearer ${this.token}`);
     }
+    if (typeof init.body === 'string' && !headers.has('content-type')) {
+      headers.set('content-type', 'application/json');
+    }
+    return fetch(this.url(path), { ...init, headers });
+  }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
-
-    const data = (await response.json().catch(() => ({}))) as T;
-
+  async json<T>(path: string, init: RequestInit = {}): Promise<ApiResponse<T>> {
+    const response = await this.raw(path, init);
+    const text = await response.text();
     return {
-      data,
       status: response.status,
-      ok: response.ok,
+      headers: response.headers,
+      body: (text === '' ? undefined : JSON.parse(text)) as T,
     };
   }
 
-  get<T>(path: string, options?: RequestOptions): Promise<ApiResponse<T>> {
-    return this.request<T>('GET', path, options);
-  }
-
-  post<T>(
-    path: string,
-    body?: unknown,
-    options?: RequestOptions,
-  ): Promise<ApiResponse<T>> {
-    return this.request<T>('POST', path, { ...options, body });
-  }
-
-  patch<T>(
-    path: string,
-    body?: unknown,
-    options?: RequestOptions,
-  ): Promise<ApiResponse<T>> {
-    return this.request<T>('PATCH', path, { ...options, body });
-  }
-
-  delete<T>(path: string, options?: RequestOptions): Promise<ApiResponse<T>> {
-    return this.request<T>('DELETE', path, options);
-  }
-
-  // Auth shortcuts (Better Auth native routes)
-  async login(email: string, password: string): Promise<AuthResult> {
-    const response = await this.post<AuthResult>('/api/auth/sign-in/email', {
-      email,
-      password,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Login failed: ${JSON.stringify(response.data)}`);
-    }
-
-    this.setAuthToken(response.data.token);
-    return response.data;
-  }
-
-  async signUp(data: {
-    email: string;
-    password: string;
-    name?: string;
-  }): Promise<AuthResult> {
-    const response = await this.post<AuthResult>('/api/auth/sign-up/email', {
-      email: data.email,
-      password: data.password,
-      name: data.name ?? data.email.split('@')[0],
-    });
-
-    if (!response.ok) {
-      throw new Error(`Register failed: ${JSON.stringify(response.data)}`);
-    }
-
-    return response.data;
-  }
-
-  async getMe() {
-    const response = await this.get<SanitizedUser>('/api/users/me');
-    if (!response.ok) {
-      throw new Error(`Get me failed: ${JSON.stringify(response.data)}`);
-    }
-
-    return response.data;
-  }
-
-  /**
-   * Better Auth native sign-out — deletes the current session from Redis
-   * (`secondaryStorage`) and expires the cookie. Uses the current bearer token
-   * to identify the session, then clears it locally.
-   */
-  async logout(): Promise<{ success: boolean }> {
-    const response = await this.post<{ success: boolean }>(
-      '/api/auth/sign-out',
-    );
-    this.clearAuthToken();
-
-    if (!response.ok) {
-      throw new Error(`Logout failed: ${JSON.stringify(response.data)}`);
-    }
-
-    return response.data;
+  post<T>(path: string, body: unknown): Promise<ApiResponse<T>> {
+    return this.json<T>(path, { method: 'POST', body: JSON.stringify(body) });
   }
 }
