@@ -8,7 +8,9 @@ import {
   PaginationOrder,
   type Page,
 } from '@dunx/infra/pagination';
-import { CurrentUser, type Caller } from './services/current-user.service.js';
+import { CurrentUser } from './services/current-user.service.js';
+import { AnonymousProbe, Caller } from './dto/caller.dto.js';
+import { PaginatedAuditLog } from '../audit/dto/audit-log.dto.js';
 
 /**
  * What the session actually resolved to, which is the one endpoint every client
@@ -31,7 +33,7 @@ export class ProfileController {
   ) {}
 
   @ApiDoc({ tags: ['profile'], summary: 'The current session' })
-  @Get('/')
+  @Get('/', { response: { 200: Caller } })
   me(): Caller {
     return this.caller.require();
   }
@@ -43,7 +45,7 @@ export class ProfileController {
    */
   @ApiDoc({ tags: ['profile'], summary: 'Recent audit entries for the caller' })
   @Roles(UserRole.ADMIN)
-  @Get('/audit')
+  @Get('/audit', { response: { 200: PaginatedAuditLog } })
   entries(): Page<AuditLogEntry> {
     return this.audit.list({
       order: PaginationOrder.DESC,
@@ -63,7 +65,7 @@ export class ProfileController {
     summary: 'Whether this request carried a session',
   })
   @Public()
-  @Get('/anonymous')
+  @Get('/anonymous', { response: { 200: AnonymousProbe } })
   anonymous(): { caller: string | null } {
     return { caller: this.caller.optional()?.email ?? null };
   }

@@ -48,20 +48,44 @@ export const UploadBody = z.object({
 
 export type UploadBody = z.infer<typeof UploadBody>;
 
+/** What a presigned link answers with. Shared so the response can name it. */
+export const FileLink = z
+  .object({ url: z.string(), expiresIn: z.number().int() })
+  .meta({ id: 'FileLink', title: 'A time-limited link to an object' });
+
 export const uploadFile = {
   body: UploadBody,
   status: 201,
+  response: { 201: FileMetadata },
 } as const satisfies RouteSchemas;
 
 export const listFiles = {
   query: pageOptionsSchema.extend({ mine: z.stringbool().optional() }),
+  response: { 200: PaginatedFiles },
 } as const satisfies RouteSchemas;
 
-export const oneFile = { params: FileIdParams } as const satisfies RouteSchemas;
+export const oneFile = {
+  params: FileIdParams,
+  response: { 200: FileMetadata },
+} as const satisfies RouteSchemas;
+
+/**
+ * The same params as `oneFile` and deliberately not shared with it. A download
+ * streams a `Response` and a delete answers 204, so neither has a body to
+ * declare, and reusing a schema that names `FileMetadata` would document one.
+ */
+export const downloadFile = {
+  params: FileIdParams,
+} as const satisfies RouteSchemas;
+
+export const deleteFile = {
+  params: FileIdParams,
+} as const satisfies RouteSchemas;
 
 export const linkFile = {
   params: FileIdParams,
   query: z.object({
     expiresIn: z.coerce.number().int().min(10).max(86_400).default(300),
   }),
+  response: { 200: FileLink },
 } as const satisfies RouteSchemas;

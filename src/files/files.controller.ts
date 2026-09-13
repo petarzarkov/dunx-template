@@ -5,6 +5,8 @@ import { Throttle } from '../core/decorators/throttle.decorator.js';
 import { UserRole } from '../users/schema/user.schema.js';
 import type { Page } from '@dunx/infra/pagination';
 import {
+  deleteFile,
+  downloadFile,
   linkFile,
   listFiles,
   oneFile,
@@ -75,8 +77,8 @@ export class FilesController {
    */
   @ApiDoc({ tags: ['files'], summary: 'Stream the bytes back' })
   @Roles(UserRole.ADMIN, UserRole.USER)
-  @Get('/:fileId/download', oneFile)
-  download(input: Input<typeof oneFile>): Promise<Response> {
+  @Get('/:fileId/download', downloadFile)
+  download(input: Input<typeof downloadFile>): Promise<Response> {
     return this.files.download(input.params.fileId);
   }
 
@@ -92,8 +94,8 @@ export class FilesController {
 
   @ApiDoc({ tags: ['files'], summary: 'Delete the object and its row' })
   @Roles(UserRole.ADMIN)
-  @Delete('/:fileId', oneFile)
-  remove(input: Input<typeof oneFile>): Promise<void> {
+  @Delete('/:fileId', deleteFile)
+  remove(input: Input<typeof deleteFile>): Promise<void> {
     return this.files.remove(input.params.fileId);
   }
 }

@@ -70,19 +70,28 @@ describe('the generated OpenAPI document', () => {
     for (const path of paths) expect(path).toStartWith('/api/');
   });
 
-  test('named request-body schemas become components', () => {
+  test('named request and response schemas become components', () => {
     // `CreateUser`, `UpdateUser` and `ValidationError` are this app's; `User`,
     // `Session`, `Account` and `Verification` came from Better Auth's own schema
     // through `contribute`, and the merge keeps both without a prefix.
-    expect(Object.keys(doc.components.schemas).sort()).toEqual([
-      'Account',
-      'CreateUser',
-      'Session',
-      'UpdateUser',
-      'User',
-      'ValidationError',
-      'Verification',
-    ]);
+    //
+    // Containment rather than equality: every route that declares a `response`
+    // adds its schema here, so an exact list would have to be edited by anyone
+    // documenting a new route, and would fail for the right reason at the wrong
+    // moment.
+    expect(Object.keys(doc.components.schemas).sort()).toEqual(
+      expect.arrayContaining([
+        'Account',
+        'CreateUser',
+        'PaginatedUsers',
+        'SanitizedUser',
+        'Session',
+        'UpdateUser',
+        'User',
+        'ValidationError',
+        'Verification',
+      ]),
+    );
   });
 
   test('the upload route documents a multipart body', () => {
@@ -95,23 +104,23 @@ describe('the generated OpenAPI document', () => {
   });
 
   /**
-   * Locks in a real gap rather than pretending it is not there.
+   * This was the gap. `RouteSchemas` had no `response` when the port was
+   * written, so a success was a bare description with no `content` and the
+   * schemas carrying `.meta({ id })` reached `components` only if a request body
+   * happened to reference them - a document that could not drive client codegen.
    *
-   * `RouteSchemas` has `body`, `query`, `params` and `status` and no `response`,
-   * and there is no `@ApiResponse` equivalent, so a success response is
-   * documented as a bare description with no `content`. `SanitizedUser`,
-   * `PaginatedUsers` and `AuditLogEntry` all carry `.meta({ id })` and none of
-   * them reaches `components`, because nothing references them. The generated
-   * document therefore cannot drive client codegen.
+   * 2.5.0 added `response`, and it is checked against the handler's return type
+   * by tsc as well as read by the generator, so the two cannot drift.
    */
-  test('KNOWN GAP: no success response body is documented', () => {
+  test('a declared response reaches components as a $ref', () => {
     const ok = doc.paths['/api/users']?.['get']?.['responses'] as Record<
       string,
-      Record<string, unknown>
+      { content?: Record<string, { schema: unknown }> }
     >;
-    expect(ok['200']).toEqual({ description: 'OK' });
-    expect(ok['200']?.['content']).toBeUndefined();
-    expect(Object.keys(doc.components.schemas)).not.toContain('SanitizedUser');
+    expect(ok['200']?.content?.['application/json']?.schema).toEqual({
+      $ref: '#/components/schemas/PaginatedUsers',
+    });
+    expect(Object.keys(doc.components.schemas)).toContain('SanitizedUser');
   });
 
   test('a validating route documents its 400', () => {
@@ -239,6 +248,22 @@ describe('the generated OpenAPI document', () => {
         (operation) => (operation['tags'] as string[] | undefined) ?? [],
       );
     expect(tags).not.toContain('MountedAuthHandler');
+  });
+
+  /**
+   * The row MAPPING.md recorded as having no equivalent. `response` on a route
+   * is checked against the handler's return type by tsc, and read by the
+   * generator here, so a documented shape is one the code cannot contradict.
+   */
+  test('a declared response reaches the document as a $ref', () => {
+    const list = doc.paths['/api/users']?.['get'] as {
+      responses: Record<string, { content: Record<string, { schema: unknown }> }>;
+    };
+    expect(list.responses['200']).toBeDefined();
+    expect(list.responses['200']?.content['application/json']?.schema).toEqual({
+      $ref: '#/components/schemas/PaginatedUsers',
+    });
+    expect(doc.components.schemas['PaginatedUsers']).toBeDefined();
   });
 
   /**

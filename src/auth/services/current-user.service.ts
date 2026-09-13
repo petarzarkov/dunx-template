@@ -1,14 +1,12 @@
 import { AuthContext, rolesOf } from '@dunx/auth';
 import { HttpError, HttpStatusCode } from '@dunx/http';
 import { UserRole } from '../../users/schema/user.schema.js';
+import type { Caller } from '../dto/caller.dto.js';
 
-export interface Caller {
-  readonly id: string;
-  readonly email: string;
-  readonly name: string;
-  readonly roles: readonly string[];
-  readonly sessionId: string;
-}
+/** Re-exported so consumers keep importing the caller from the service. */
+export type { Caller };
+
+
 
 /**
  * The authenticated caller, for services that are several constructor hops from

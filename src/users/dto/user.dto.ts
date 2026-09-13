@@ -62,12 +62,40 @@ export const UpdateUser = z
 
 export type UpdateUser = z.infer<typeof UpdateUser>;
 
+/**
+ * `response` is keyed by status and checked against the handler's return type at
+ * compile time, which is what `@ApiOkResponse({ type: X })` only ever documented.
+ * It is also what `@dunx/openapi` reads, so the document and the code cannot
+ * disagree.
+ */
 export const listUsers = {
   query: ListUsersQuery,
+  response: { 200: PaginatedUsers },
 } as const satisfies RouteSchemas;
-export const oneUser = { params: UserIdParams } as const satisfies RouteSchemas;
-export const createUser = { body: CreateUser } as const satisfies RouteSchemas;
+
+/** GET one, ban and unban: all three answer with the user. */
+export const oneUser = {
+  params: UserIdParams,
+  response: { 200: SanitizedUser },
+} as const satisfies RouteSchemas;
+
+/**
+ * Separate from `oneUser` despite the identical params, because a delete answers
+ * 204 with no body and sharing the schema would document a `SanitizedUser` that
+ * never arrives.
+ */
+export const deleteUser = {
+  params: UserIdParams,
+} as const satisfies RouteSchemas;
+
+export const createUser = {
+  body: CreateUser,
+  // `@Post` answers 201, so that is the status the body is declared under.
+  response: { 201: SanitizedUser },
+} as const satisfies RouteSchemas;
+
 export const updateUser = {
   params: UserIdParams,
   body: UpdateUser,
+  response: { 200: SanitizedUser },
 } as const satisfies RouteSchemas;

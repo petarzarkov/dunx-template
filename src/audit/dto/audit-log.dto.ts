@@ -41,4 +41,5 @@ export const ListAuditQuery = pageOptionsSchema.extend({
 
 export const listAudit = {
   query: ListAuditQuery,
+  response: { 200: PaginatedAuditLog },
 } as const satisfies RouteSchemas;

@@ -13,6 +13,7 @@ import { ApiDoc } from '@dunx/openapi';
 import type { Page } from '@dunx/infra/pagination';
 import {
   createUser,
+  deleteUser,
   listUsers,
   oneUser,
   updateUser,
@@ -91,8 +92,8 @@ export class UsersController {
 
   @ApiDoc({ tags: ['users'], summary: 'Delete a user' })
   @Roles(UserRole.ADMIN)
-  @Delete('/:userId', oneUser)
-  remove(input: Input<typeof oneUser>): void {
+  @Delete('/:userId', deleteUser)
+  remove(input: Input<typeof deleteUser>): void {
     this.users.remove(input.params.userId);
   }
 }
