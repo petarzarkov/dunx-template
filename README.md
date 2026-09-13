@@ -100,24 +100,24 @@ changes.
 
 ## Scripts
 
-| Script                 | What it does                                                                                                                                                                  |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bun run dev`          | `bun --watch src/main.ts`                                                                                                                                                     |
-| `bun run start`        | `bun src/main.ts`, the shape the Dockerfile uses                                                                                                                              |
-| `bun run worker`       | `bun src/worker.ts`, the queue consumer. A second process                                                                                                                     |
-| `bun run build`        | `Bun.build` with `depsPlugin` into `dist/`; `start:dist` runs it                                                                                                              |
-| `bun run typecheck`    | `tsc --noEmit`                                                                                                                                                                |
-| `bun run lint`         | oxlint, fixing in place. `lint:check` does not fix                                                                                                                            |
-| `bun run format`       | oxfmt. `format:check` does not write                                                                                                                                          |
-| `bun test`             | unit (`*.test.ts`) and integration (`*.spec.ts`) under `src/`                                                                                                                 |
-| `bun run test:e2e`     | spawns a real server and drives it over HTTP                                                                                                                                  |
-| `bun run mig:gen`      | `drizzle-kit generate`                                                                                                                                                        |
-| `bun run mig:run`      | applies migrations without booting the app                                                                                                                                    |
-| `bun run seed`         | migrate, apply triggers, then `runSeeds`                                                                                                                                      |
-| `bun run create:admin` | creates or promotes an administrator, in any environment. The seeder refuses to run in production, so this is how a deployment gets its first one                             |
-| `bun run db:drop`      | deletes the SQLite file and its WAL sidecars                                                                                                                                  |
-| `bun run gen:openapi`  | exports `openapi.json` with no container and no server. The app serves the document itself at `/api/openapi.json`; this is for committing the contract and for client codegen |
-| `bun run gen:env:docs` | regenerates `docs/env-vars.md` from the zod env schemas                                                                                                                       |
+| Script                 | What it does                                                                                                                                                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun run dev`          | `bun --watch src/main.ts`                                                                                                                                                                                         |
+| `bun run start`        | `bun src/main.ts`, the shape the Dockerfile uses                                                                                                                                                                  |
+| `bun run worker`       | `bun src/worker.ts`, the queue consumer. A second process                                                                                                                                                         |
+| `bun run build`        | `Bun.build` with `depsPlugin` into `dist/`; `start:dist` runs it                                                                                                                                                  |
+| `bun run typecheck`    | `tsc --noEmit`                                                                                                                                                                                                    |
+| `bun run lint`         | oxlint, fixing in place. `lint:check` does not fix                                                                                                                                                                |
+| `bun run format`       | oxfmt. `format:check` does not write                                                                                                                                                                              |
+| `bun test`             | unit (`*.test.ts`) and integration (`*.spec.ts`) under `src/`                                                                                                                                                     |
+| `bun run test:e2e`     | spawns a real server and drives it over HTTP                                                                                                                                                                      |
+| `bun run mig:gen`      | `drizzle-kit generate`                                                                                                                                                                                            |
+| `bun run mig:run`      | applies migrations without booting the app                                                                                                                                                                        |
+| `bun run seed`         | migrate, apply triggers, then `runSeeds`                                                                                                                                                                          |
+| `bun run create:admin` | creates or promotes an administrator, in any environment. The seeder refuses to run in production, so this is how a deployment gets its first one                                                                 |
+| `bun run db:drop`      | deletes the SQLite file and its WAL sidecars                                                                                                                                                                      |
+| `bun run gen:openapi`  | exports `openapi.json` with no container and no server. The app serves the document itself at `/api/openapi.json`; this writes a gitignored copy for client codegen and for diffing the contract between branches |
+| `bun run gen:env:docs` | regenerates `docs/env-vars.md` from the zod env schemas                                                                                                                                                           |
 
 ## Layout
 
