@@ -77,6 +77,18 @@ export class FilesService {
   private validate(file: File): void {
     const limits = this.config.get('storage');
 
+    /**
+     * Type before size, deliberately. A two-byte `.exe` trips the floor as well
+     * as the allow-list, and "unsupported media type" is the answer that tells
+     * the caller something they can act on.
+     */
+    if (!limits.allowedTypes.includes(file.type)) {
+      throw new HttpError(
+        HttpStatusCode.UNSUPPORTED_MEDIA_TYPE,
+        `Content type "${file.type}" is not accepted. Allowed: ${limits.allowedTypes.join(', ')}`,
+      );
+    }
+
     if (file.size > limits.maxBytes) {
       throw new HttpError(
         HttpStatusCode.PAYLOAD_TOO_LARGE,
@@ -93,12 +105,6 @@ export class FilesService {
       throw new HttpError(
         HttpStatusCode.BAD_REQUEST,
         `File name "${file.name}" is shorter than ${limits.minNameLength} characters`,
-      );
-    }
-    if (!limits.allowedTypes.includes(file.type)) {
-      throw new HttpError(
-        HttpStatusCode.UNSUPPORTED_MEDIA_TYPE,
-        `Content type "${file.type}" is not accepted. Allowed: ${limits.allowedTypes.join(', ')}`,
       );
     }
   }

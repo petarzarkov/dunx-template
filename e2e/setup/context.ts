@@ -41,6 +41,10 @@ const DEFAULTS: Record<string, string> = {
   LOG_LEVEL: 'fatal',
   SQLITE_DB_PATH: './.tmp/e2e.db',
   STORAGE_LOCAL_ROOT: './.tmp/e2e-uploads',
+  // The upload fixture is a 4x4 PNG, well under the 1 KB production floor. The
+  // floor itself is asserted in `src/files/files.spec.ts`, where a file can be
+  // built to violate exactly one rule at a time.
+  UPLOAD_MIN_BYTES: '1',
   E2E_API_URL: 'http://127.0.0.1:3999/api',
   // The credential `AuthAdminSeeder` creates at boot, and what the suite signs in
   // with. A user row inserted by hand has no `account` row and cannot sign in.

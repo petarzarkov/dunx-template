@@ -1,37 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { getTestContext } from '../setup/context.js';
-
-interface Frame {
-  event: string;
-  data: unknown;
-}
-
-const open = (origin: string, token?: string): Promise<WebSocket> =>
-  new Promise((resolve, reject) => {
-    const socket = new WebSocket(
-      `${origin.replace(/^http/, 'ws')}/ws`,
-      token === undefined
-        ? undefined
-        : { headers: { authorization: `Bearer ${token}` } },
-    );
-    socket.addEventListener('open', () => resolve(socket), { once: true });
-    socket.addEventListener('error', () => reject(new Error('refused')), {
-      once: true,
-    });
-  });
-
-const frame = (socket: WebSocket, event: string): Promise<Frame> =>
-  new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`no ${event}`)), 5000);
-    const listener = (message: MessageEvent): void => {
-      const parsed = JSON.parse(String(message.data)) as Frame;
-      if (parsed.event !== event) return;
-      clearTimeout(timer);
-      socket.removeEventListener('message', listener);
-      resolve(parsed);
-    };
-    socket.addEventListener('message', listener);
-  });
+import { frame, open } from '../utils/ws-client.js';
 
 /**
  * The gateway shares the HTTP server, so this connects to the same port the REST

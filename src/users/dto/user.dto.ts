@@ -73,9 +73,20 @@ export const listUsers = {
   response: { 200: PaginatedUsers },
 } as const satisfies RouteSchemas;
 
-/** GET one, ban and unban: all three answer with the user. */
 export const oneUser = {
   params: UserIdParams,
+  response: { 200: SanitizedUser },
+} as const satisfies RouteSchemas;
+
+/**
+ * Ban and unban. Same params and same body as `oneUser`, but `status: 200` is
+ * not decoration: `@Post` answers 201 by default, and neither of these creates
+ * anything - they return the user that already existed, updated. Sharing
+ * `oneUser` here documented a 200 the route never sent.
+ */
+export const setUserBan = {
+  params: UserIdParams,
+  status: 200,
   response: { 200: SanitizedUser },
 } as const satisfies RouteSchemas;
 

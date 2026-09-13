@@ -23,13 +23,13 @@ describe('users against a live server', () => {
     const created = await api.post<User>('users', {
       email,
       name: 'Sign In',
-      password: 'an-e2e-password',
+      password: 'An-e2e-password-1!',
     });
     expect(created.status).toBe(201);
 
     const response = await api.as(undefined).raw('auth/sign-in/email', {
       method: 'POST',
-      body: JSON.stringify({ email, password: 'an-e2e-password' }),
+      body: JSON.stringify({ email, password: 'An-e2e-password-1!' }),
     });
     expect(response.status).toBe(200);
     expect(response.headers.get('set-auth-token')).not.toBeNull();
@@ -42,7 +42,7 @@ describe('users against a live server', () => {
     const created = await api.post<User>('users', {
       email,
       name: 'Round Trip',
-      password: 'an-e2e-password',
+      password: 'An-e2e-password-1!',
     });
     expect(created.status).toBe(201);
 

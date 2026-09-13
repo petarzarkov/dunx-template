@@ -16,6 +16,7 @@ import {
   deleteUser,
   listUsers,
   oneUser,
+  setUserBan,
   updateUser,
   type SanitizedUser,
 } from './dto/user.dto.js';
@@ -70,8 +71,8 @@ export class UsersController {
     summary: 'Ban a user so it can no longer use the platform',
   })
   @Roles(UserRole.ADMIN)
-  @Post('/:userId/ban', oneUser)
-  ban(input: Input<typeof oneUser>): Promise<SanitizedUser> {
+  @Post('/:userId/ban', setUserBan)
+  ban(input: Input<typeof setUserBan>): Promise<SanitizedUser> {
     // The caller comes out of `AuthContext` rather than off a header, so it is the
     // session the guard resolved and not something the client asserted.
     if (this.caller.require().id === input.params.userId) {
@@ -85,8 +86,8 @@ export class UsersController {
 
   @ApiDoc({ tags: ['users'], summary: 'Lift a ban' })
   @Roles(UserRole.ADMIN)
-  @Post('/:userId/unban', oneUser)
-  unban(input: Input<typeof oneUser>): Promise<SanitizedUser> {
+  @Post('/:userId/unban', setUserBan)
+  unban(input: Input<typeof setUserBan>): Promise<SanitizedUser> {
     return this.users.setBanned(input.params.userId, false);
   }
 
