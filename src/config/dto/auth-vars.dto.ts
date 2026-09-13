@@ -57,6 +57,8 @@ export const authVarsSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GITHUB_OAUTH_CLIENT_ID: z.string().optional(),
   GITHUB_OAUTH_CLIENT_SECRET: z.string().optional(),
+  LINKEDIN_OAUTH_CLIENT_ID: z.string().optional(),
+  LINKEDIN_OAUTH_CLIENT_SECRET: z.string().optional(),
 
   SEED_ADMIN_EMAIL: z.string().default('admin@local.dev'),
   SEED_ADMIN_PASSWORD: z.string().min(8).default('admin-password'),

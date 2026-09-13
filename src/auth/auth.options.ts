@@ -55,6 +55,7 @@ export const baseAuthOptions = (config: AppConfig) => {
     socialProviders: {
       ...(auth.google === undefined ? {} : { google: auth.google }),
       ...(auth.github === undefined ? {} : { github: auth.github }),
+      ...(auth.linkedin === undefined ? {} : { linkedin: auth.linkedin }),
     },
     plugins: [
       // `role` on the user, which `@Roles()` reads through `SessionGuard`, plus

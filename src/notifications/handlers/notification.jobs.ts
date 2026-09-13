@@ -9,6 +9,7 @@ import {
   TOPICS,
   userTopic,
   type UserBannedJob,
+  type UserPasswordResetJob,
   type UserRegisteredJob,
 } from '../events/events.js';
 import { EmailService } from '../services/email.service.js';
@@ -53,6 +54,27 @@ export class NotificationJobs {
     });
 
     this.logger.info('handled user.registered', { userId });
+    return { notified: userId };
+  }
+
+  /**
+   * The reset link, delivered. Nothing is published to a socket: a reset is
+   * proof of access to the mailbox, and announcing it on the user's own topic
+   * would show it to whoever already holds the session.
+   */
+  @JobHandler({ queue: QUEUES.NOTIFICATIONS, name: JOBS.USER_PASSWORD_RESET })
+  async passwordReset(
+    job: Job<UserPasswordResetJob>,
+  ): Promise<{ notified: string }> {
+    const { userId, email, url } = job.data;
+
+    await this.email.send({
+      to: email,
+      subject: 'Reset your password',
+      body: `Follow this link to choose a new password: ${url}`,
+    });
+
+    this.logger.info('handled user.password_reset', { userId });
     return { notified: userId };
   }
 

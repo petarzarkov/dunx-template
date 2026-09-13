@@ -11,7 +11,7 @@ import { accounts } from './schema/account.schema.js';
 import { sessions } from './schema/session.schema.js';
 import { verifications } from './schema/verification.schema.js';
 import { AuditModule } from '../audit/audit.module.js';
-import { registrationHooks } from './auth.hooks.js';
+import { passwordResetSender, registrationHooks } from './auth.hooks.js';
 import { AUTH_MOUNT, baseAuthOptions } from './auth.options.js';
 import { ProfileController } from './profile.controller.js';
 import { AuthAdminSeeder } from './services/auth-admin.seeder.js';
@@ -69,6 +69,16 @@ const auth = AuthModule.forRootAsync(
         // Every path into the user table, not just the ones this app
         // calls - which is why this is a hook and not a call site.
         databaseHooks: registrationHooks(publisher, logger),
+        /**
+         * Merged into the options `authOptions` built from config, because the
+         * sender needs `JobPublisher` and that only exists in the container.
+         * Setting it is what makes better-auth mount the reset endpoints at all.
+         */
+        emailAndPassword: {
+          ...base.emailAndPassword,
+          enabled: true,
+          sendResetPassword: passwordResetSender(publisher),
+        },
         // An explicit opt-in, never a side effect of `REDIS_URL` being
         // set. `redisStorage` deliberately does not soften a connection
         // failure - a swallowed `null` from `get` would read as "no

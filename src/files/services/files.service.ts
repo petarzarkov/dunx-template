@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { Logger } from '@dunx/core';
 import { JobPublisher } from '@dunx/infra/queue';
 import {
@@ -72,6 +73,24 @@ export class FilesService {
       throw new HttpError(
         HttpStatusCode.PAYLOAD_TOO_LARGE,
         `File is ${file.size} bytes, the limit is ${limits.maxBytes}`,
+      );
+    }
+    /**
+     * The floor and the filename rule were two `FileValidator` subclasses in the
+     * NestJS template, wired through `@ValidatedFiles`. They are plain checks
+     * here, against validated config rather than decorator arguments, which is
+     * the same move the type and size checks above already made.
+     */
+    if (file.size < limits.minBytes) {
+      throw new HttpError(
+        HttpStatusCode.BAD_REQUEST,
+        `File is ${file.size} bytes, the minimum is ${limits.minBytes}`,
+      );
+    }
+    if (basename(file.name).length < limits.minNameLength) {
+      throw new HttpError(
+        HttpStatusCode.BAD_REQUEST,
+        `File name "${file.name}" is shorter than ${limits.minNameLength} characters`,
       );
     }
     if (!limits.allowedTypes.includes(file.type)) {

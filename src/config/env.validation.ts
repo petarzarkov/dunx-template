@@ -106,7 +106,9 @@ export const validateConfig = (env: ConfigSource) => {
       endpoint: vars.S3_ENDPOINT,
       accessKeyId: vars.S3_ACCESS_KEY_ID,
       secretAccessKey: vars.S3_SECRET_ACCESS_KEY,
+      minBytes: vars.UPLOAD_MIN_BYTES,
       maxBytes: vars.UPLOAD_MAX_BYTES,
+      minNameLength: vars.UPLOAD_MIN_NAME_LENGTH,
       allowedTypes: vars.UPLOAD_ALLOWED_TYPES,
     },
     images: {
@@ -129,6 +131,10 @@ export const validateConfig = (env: ConfigSource) => {
       github: oauth(
         vars.GITHUB_OAUTH_CLIENT_ID,
         vars.GITHUB_OAUTH_CLIENT_SECRET,
+      ),
+      linkedin: oauth(
+        vars.LINKEDIN_OAUTH_CLIENT_ID,
+        vars.LINKEDIN_OAUTH_CLIENT_SECRET,
       ),
       seedAdmin: {
         email: vars.SEED_ADMIN_EMAIL,

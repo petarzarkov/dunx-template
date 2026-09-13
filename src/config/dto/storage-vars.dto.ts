@@ -32,11 +32,18 @@ export const storageVarsSchema = z.object({
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
 
+  /**
+   * A floor as well as a ceiling. A zero-byte part is what a browser sends for
+   * an empty file input, and storing it costs a row, an object and a 404 later.
+   */
+  UPLOAD_MIN_BYTES: z.coerce.number().int().min(1).default(1024),
   UPLOAD_MAX_BYTES: z.coerce
     .number()
     .int()
     .min(1024)
     .default(10 * 1024 * 1024),
+  /** Guards against `a.png`, which collides across users far more often. */
+  UPLOAD_MIN_NAME_LENGTH: z.coerce.number().int().min(1).default(6),
   UPLOAD_ALLOWED_TYPES: csv([
     'image/jpeg',
     'image/png',

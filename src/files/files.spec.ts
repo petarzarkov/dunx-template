@@ -57,6 +57,10 @@ beforeAll(async () => {
     // from the last one - the counters are in a Redis that outlives the process.
     THROTTLE_PREFIX: `test-${crypto.randomUUID()}`,
     UPLOAD_MAX_BYTES: '4096',
+    // The fixtures are a 4x4 PNG and a two-line CSV, both well under the 1 KB
+    // default floor. The floor gets its own test below rather than a bound that
+    // every other assertion here has to work around.
+    UPLOAD_MIN_BYTES: '1',
     SEED_ADMIN_EMAIL: 'admin@local.dev',
     SEED_ADMIN_PASSWORD: 'admin-password',
   };
@@ -114,6 +118,27 @@ describe('multipart upload', () => {
     });
     const { status } = await upload(exe, adminToken);
     expect(status).toBe(415);
+  });
+
+  /**
+   * The two rules the NestJS template enforced with `FileValidator` subclasses
+   * wired through `@ValidatedFiles`. They are plain checks against validated
+   * config here, so this is what keeps them from being dropped again.
+   */
+  test('an empty part is refused, whatever its type says', async () => {
+    const empty = new File([], 'empty-enough.png', { type: 'image/png' });
+    const { status } = await upload(empty, adminToken);
+    expect(status).toBe(400);
+  });
+
+  test('a filename shorter than the minimum is refused', async () => {
+    const short = new File(
+      [Uint8Array.from(atob(PNG_BASE64), (c) => c.charCodeAt(0))],
+      'a.png',
+      { type: 'image/png' },
+    );
+    const { status } = await upload(short, adminToken);
+    expect(status).toBe(400);
   });
 
   test('a JSON body against a multipart route is a 400 from the schema', async () => {
