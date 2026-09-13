@@ -19,6 +19,15 @@
     "prefer-const": "error",
     "max-lines": ["error", { "max": 500, "skipBlankLines": true }]
   },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.spec.ts", "**/*.e2e.ts"],
+      "rules": {
+        "max-lines": ["error", { "max": 800, "skipBlankLines": true }],
+        "typescript/await-thenable": "off"
+      }
+    }
+  ],
   "ignorePatterns": [
     "dist",
     "coverage",

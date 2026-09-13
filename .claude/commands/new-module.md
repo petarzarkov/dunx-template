@@ -38,7 +38,7 @@ export const bonuses = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  t => [uniqueIndex('UQ_bonus_name').on(t.name)],
+  (t) => [uniqueIndex('UQ_bonus_name').on(t.name)],
 );
 
 export type BonusRow = typeof bonuses.$inferSelect;

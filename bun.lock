@@ -25,6 +25,7 @@
       },
       "devDependencies": {
         "@dunx/testing": "3.8.1",
+        "@stagelint/stagelint": "0.1.4",
         "@types/bun": "1.4.1",
         "drizzle-kit": "^0.31.10",
         "oxfmt": "0.66.0",
@@ -432,6 +433,20 @@
     "@scalar/workspace-store": ["@scalar/workspace-store@0.60.0", "", { "dependencies": { "@scalar/asyncapi-upgrader": "0.1.9", "@scalar/helpers": "0.11.3", "@scalar/json-magic": "0.13.4", "@scalar/openapi-upgrader": "0.2.15", "@scalar/schemas": "0.9.0", "@scalar/snippetz": "0.9.30", "@scalar/typebox": "0.1.3", "@scalar/types": "0.19.0", "@scalar/validation": "0.6.3", "js-base64": "^3.9.2", "type-fest": "^5.8.0", "vue": "^3.5.40", "yaml": "^2.9.0" } }, "sha512-O3Zp6Olq7+L2Yp6xd7Z9sIQ4VG5SwR2oHkiGTagZBSrqEuvuce5Z93q3NVPux6j3cID/geW0vC0sPJ5LxNTnBA=="],
 
     "@scarf/scarf": ["@scarf/scarf@1.4.0", "", {}, "sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ=="],
+
+    "@stagelint/darwin-arm64": ["@stagelint/darwin-arm64@0.1.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-RSVdLbrwKlb3eOtleVudAzgRej8zKzXj+ztIEu1Njekhbp+jI1M8DUpCC6fRyjOA1FBp+QulVGJQOAcn0E0Qbg=="],
+
+    "@stagelint/darwin-x64": ["@stagelint/darwin-x64@0.1.4", "", { "os": "darwin", "cpu": "x64" }, "sha512-67HlsybMZ6MYqqfwo2cynvCU/pR7MheVL2StgJNDhODUxkHFsSFpUWZC9KRTgP+jN8W1eX/vcLpteBU7mYXDtQ=="],
+
+    "@stagelint/linux-arm64": ["@stagelint/linux-arm64@0.1.4", "", { "os": "linux", "cpu": "arm64" }, "sha512-eFVN25W69mF9+NTbhKSC0MZ7XCLIxqIHyCqWZ/NhJ9XAvNnspD82RKMiDXnxGJRmyqVOZHXuOK6XzJtbc7Slxw=="],
+
+    "@stagelint/linux-x64": ["@stagelint/linux-x64@0.1.4", "", { "os": "linux", "cpu": "x64" }, "sha512-L4+NkU4yEFQuMh5EVd8luCbLiSp2SZ0Y+PI6UkeGhS3sbshQ+hVLTS9X0DgRvstjVjYyaYnruHjLwZNPnUwV2Q=="],
+
+    "@stagelint/stagelint": ["@stagelint/stagelint@0.1.4", "", { "optionalDependencies": { "@stagelint/darwin-arm64": "0.1.4", "@stagelint/darwin-x64": "0.1.4", "@stagelint/linux-arm64": "0.1.4", "@stagelint/linux-x64": "0.1.4", "@stagelint/win32-arm64": "0.1.4", "@stagelint/win32-x64": "0.1.4" }, "bin": { "stagelint": "bin/stagelint.js" } }, "sha512-A4VmQ3/0ZPZE35IB7Ztt5oPXXy8xLaK3MZKDkQY0d+KFvUWW2cK3VxlfVC9xHJAvnPj2r3hQINKhEDv1OvCkwQ=="],
+
+    "@stagelint/win32-arm64": ["@stagelint/win32-arm64@0.1.4", "", { "os": "win32", "cpu": "arm64" }, "sha512-sjv0P3LJzNzcDfAqSe+yxMtfWzjK/P5AgunWzoG/KedqZH2gtOUVRmlwBv4Lmnk+b5s7bNcqojTU4aETO4VYXQ=="],
+
+    "@stagelint/win32-x64": ["@stagelint/win32-x64@0.1.4", "", { "os": "win32", "cpu": "x64" }, "sha512-mfiPRboeGwubdzOvnQHFPQn44sfdnGdKOfJDm820IPiHFbfCCqh5fvsvQtTew6ttxby39RE9OYcJzRgJLokhOw=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 

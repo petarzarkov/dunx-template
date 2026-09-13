@@ -15,11 +15,12 @@ import { JOBS, QUEUES } from '../notifications/events/events.js';
  * mail was never queued is a link the user never receives, and failing the
  * request tells them to try again rather than leaving them waiting.
  */
-export const passwordResetSender = (
-  publisher: JobPublisher,
-): NonNullable<
-  NonNullable<BetterAuthOptions['emailAndPassword']>['sendResetPassword']
-> =>
+export const passwordResetSender =
+  (
+    publisher: JobPublisher,
+  ): NonNullable<
+    NonNullable<BetterAuthOptions['emailAndPassword']>['sendResetPassword']
+  > =>
   async ({ user, url }) => {
     await publisher.publish(QUEUES.NOTIFICATIONS, JOBS.USER_PASSWORD_RESET, {
       userId: user.id,

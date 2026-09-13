@@ -69,7 +69,8 @@ export class AppDashboardModule {
         authorize: async (req: BunRequest): Promise<boolean> => {
           const principal = await auth.api.getSession({ headers: req.headers });
           return (
-            principal !== null && rolesOf(principal.user).includes(UserRole.ADMIN)
+            principal !== null &&
+            rolesOf(principal.user).includes(UserRole.ADMIN)
           );
         },
       }),

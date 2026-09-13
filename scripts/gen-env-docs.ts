@@ -98,11 +98,19 @@ const typeOf = (schema: Record<string, unknown>): string => {
   const format = schema['format'];
   const name = typeof format === 'string' ? `${base} (${format})` : base;
 
-  const min = schema['minimum'] ?? schema['minLength'];
+  /**
+   * JSON Schema values arrive as `unknown`, and interpolating one into a
+   * template literal is how `[object Object]` reaches the documentation. Narrow
+   * to the two shapes a bound is actually written in, and drop anything else.
+   */
+  const bound = (value: unknown): number | string | undefined =>
+    typeof value === 'number' || typeof value === 'string' ? value : undefined;
+
+  const min = bound(schema['minimum'] ?? schema['minLength']);
   // `z.coerce.number().int()` carries an implicit `MAX_SAFE_INTEGER` ceiling, which
   // is true and useless: printing `16..9007199254740991` for a memory limit reads as
   // a real bound someone chose. Only a max the schema actually states is shown.
-  const stated = schema['maximum'] ?? schema['maxLength'];
+  const stated = bound(schema['maximum'] ?? schema['maxLength']);
   const max =
     typeof stated === 'number' && stated >= Number.MAX_SAFE_INTEGER
       ? undefined

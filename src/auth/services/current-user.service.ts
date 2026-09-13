@@ -6,8 +6,6 @@ import type { Caller } from '../dto/caller.dto.js';
 /** Re-exported so consumers keep importing the caller from the service. */
 export type { Caller };
 
-
-
 /**
  * The authenticated caller, for services that are several constructor hops from
  * the request and are handed nothing.

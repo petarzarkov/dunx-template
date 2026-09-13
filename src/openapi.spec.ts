@@ -257,7 +257,10 @@ describe('the generated OpenAPI document', () => {
    */
   test('a declared response reaches the document as a $ref', () => {
     const list = doc.paths['/api/users']?.['get'] as {
-      responses: Record<string, { content: Record<string, { schema: unknown }> }>;
+      responses: Record<
+        string,
+        { content: Record<string, { schema: unknown }> }
+      >;
     };
     expect(list.responses['200']).toBeDefined();
     expect(list.responses['200']?.content['application/json']?.schema).toEqual({

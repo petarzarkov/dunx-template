@@ -186,7 +186,10 @@
     <main>
       <header>
         <h1>dunx template</h1>
-        <span><span id="dot" class="dot"></span><span id="state">offline</span></span>
+        <span
+          ><span id="dot" class="dot"></span
+          ><span id="state">offline</span></span
+        >
       </header>
       <p class="sub">
         One <code>Bun.serve</code> answers the REST routes and this socket. No
@@ -197,11 +200,20 @@
         <div class="row">
           <div>
             <label for="email">Email</label>
-            <input id="email" type="email" autocomplete="username" value="admin@example.com" />
+            <input
+              id="email"
+              type="email"
+              autocomplete="username"
+              value="admin@example.com"
+            />
           </div>
           <div>
             <label for="password">Password</label>
-            <input id="password" type="password" autocomplete="current-password" />
+            <input
+              id="password"
+              type="password"
+              autocomplete="current-password"
+            />
           </div>
           <button id="signin">Sign in</button>
           <button id="signup" class="ghost">Register</button>
@@ -212,7 +224,14 @@
       <section id="chat" class="panel" hidden>
         <div id="log"></div>
         <form id="send" class="row">
-          <div><input id="text" placeholder="Say something" autocomplete="off" maxlength="1000" /></div>
+          <div>
+            <input
+              id="text"
+              placeholder="Say something"
+              autocomplete="off"
+              maxlength="1000"
+            />
+          </div>
           <button type="submit">Send</button>
           <button type="button" id="out" class="ghost">Sign out</button>
         </form>
@@ -243,7 +262,13 @@
         String(s).replace(
           /[&<>"']/g,
           (c) =>
-            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+            ({
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+            })[c],
         );
 
       const now = () => new Date().toLocaleTimeString();
@@ -281,7 +306,10 @@
           }
           const { event, data } = frame;
           if (event === 'connected') {
-            line(`connected as <span class="who">${esc(data.email)}</span>`, 'sys');
+            line(
+              `connected as <span class="who">${esc(data.email)}</span>`,
+              'sys',
+            );
             $('rooms').innerHTML = data.rooms
               .map((r) => `<span class="tag">${esc(r)}</span>`)
               .join('');
@@ -294,7 +322,10 @@
             return;
           }
           if (event === 'notification') {
-            line(`${esc(data.event)} ${esc(JSON.stringify(data.payload))}`, 'note');
+            line(
+              `${esc(data.event)} ${esc(JSON.stringify(data.payload))}`,
+              'note',
+            );
             return;
           }
           if (event === 'chatMessage' && data && data.error) {
@@ -355,7 +386,9 @@
       };
 
       // A live session means the upgrade will be accepted, so skip the form.
-      const me = await fetch(api('/profile'), { headers: { accept: 'application/json' } });
+      const me = await fetch(api('/profile'), {
+        headers: { accept: 'application/json' },
+      });
       if (me.ok) enter();
     </script>
   </body>
