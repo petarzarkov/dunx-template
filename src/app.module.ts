@@ -11,6 +11,7 @@ import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { FilesFeatureModule } from './files/files.module.js';
 import { AppDashboardModule } from './infra/dashboard/dashboard.module.js';
 import { AppCacheModule } from './infra/cache/cache.module.js';
+import { AppThrottleModule } from './infra/throttle/throttle.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
 import { HealthModule } from './infra/health/health.module.js';
@@ -18,7 +19,6 @@ import { ImagesConfigModule } from './infra/images/images.module.js';
 import { QueuesModule } from './infra/queue/queue.module.js';
 import { RedisCacheModule } from './infra/redis/redis.module.js';
 import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
-import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -77,6 +77,8 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
   RedisCacheModule.forRoot(),
   // After Redis: the L2 store is built over that connection.
   AppCacheModule.forRoot(),
+  // After the cache: it reuses that store's reachability probe to pick a counter.
+  AppThrottleModule.forRoot(),
   StorageModule.forRoot(),
   ImagesConfigModule.forRoot(),
 ];
@@ -164,7 +166,6 @@ export class AppModule {
        */
       providers: [
         AuditContextMiddleware,
-        ThrottleGuard,
         ResponseCacheMiddleware,
         HomeMiddleware,
       ],

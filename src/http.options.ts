@@ -1,12 +1,12 @@
 import { SessionGuard } from '@dunx/auth';
 import { DashboardMiddleware } from '@dunx/dashboard';
+import { ThrottleGuard } from '@dunx/http';
 import { RedisRelay, type HttpOptions } from '@dunx/http';
 import { SERVICE_ROUTES } from './constants.js';
 import type { AppConfig } from './config/env.validation.js';
 import { errorMapper } from './core/errors/error-mapper.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
 import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
-import { ThrottleGuard } from './infra/redis/guards/throttle.guard.js';
 
 /**
  * The `HttpOptions` in one place, because they have to be passed to

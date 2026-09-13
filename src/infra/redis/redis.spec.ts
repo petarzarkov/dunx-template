@@ -97,17 +97,23 @@ describe('with a broker that will not answer', () => {
   });
 
   /**
-   * The rate limiter fails **open**. `THROTTLE_LIMIT` is 1 here, so with a
-   * reachable counter the second call would be a 429 - refusing every request
-   * because the limiter is down would turn a degraded cache into an outage.
+   * The rate limiter falls back to an **in-process counter**, which is a change
+   * from the hand-rolled guard this replaced: that one failed open, so a
+   * deployment with a broken Redis had no rate limiting at all and said nothing
+   * about it. Counting in memory means the budget is per replica rather than
+   * absent, and the boot log says which one is in use.
+   *
+   * `THROTTLE_LIMIT` is 1 here, so the second call is the one that proves a
+   * counter exists.
    */
-  test('the throttler stops counting instead of refusing', async () => {
-    for (const _ of [1, 2, 3]) {
-      const { status } = await server.json('api/profile', {
-        headers: bearer(token),
-      });
-      expect(status).toBe(200);
-    }
+  test('the throttler counts in memory when the broker is gone', async () => {
+    const first = await server.json('api/profile', { headers: bearer(token) });
+    expect(first.status).toBe(200);
+
+    const second = await server.json('api/profile', { headers: bearer(token) });
+    expect(second.status).toBe(429);
+    // The framework guard reports the budget, which the hand-rolled one did not.
+    expect(second.headers.get('retry-after')).not.toBeNull();
   });
 
   /**

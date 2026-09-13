@@ -121,5 +121,17 @@ export const toErrorBody = (error: unknown): ErrorBody | undefined => {
 export const errorMapper: ErrorMapper = (error, req) => {
   const body = toErrorBody(error);
   if (body === undefined) return defaultErrorMapper(error, req);
-  return Response.json(body, { status: body.status });
+  /**
+   * `HttpError.headers` is forwarded, and forgetting it is not hypothetical: the
+   * throttle guard reports its budget in `RateLimit-Limit`, `RateLimit-Remaining`
+   * and `Retry-After`, and a mapper that rebuilds the response from the body
+   * alone drops all three. A 429 that does not say when to try again is the
+   * least useful 429 there is.
+   */
+  return Response.json(body, {
+    status: body.status,
+    ...(error instanceof HttpError && error.headers !== undefined
+      ? { headers: error.headers }
+      : {}),
+  });
 };
