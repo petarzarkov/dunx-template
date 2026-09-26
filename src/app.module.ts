@@ -98,9 +98,6 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
   RedisCacheModule.forRoot(),
   // After Redis: the L2 store is built over that connection.
   AppCacheModule.forRoot(),
-  // After the cache: it reuses that store's reachability probe to pick a counter.
-  AppThrottleModule.forRoot(),
-  AppIdempotencyModule.forRoot(),
   StorageModule.forRoot(),
   ImagesConfigModule.forRoot(),
 ];
@@ -160,6 +157,14 @@ export class AppModule {
         }),
         // After DatabaseModule, so better-auth reuses the connection it opened.
         AccountsModule,
+        /**
+         * Web process only, and after `AccountsModule`: both read the caller off
+         * `CurrentUser` and pick a store from the cache's probe. In the shared
+         * foundation they pulled `AccountsModule` into the worker too, whose
+         * `AuthAdminSeeder` then raced this process's to insert the same admin.
+         */
+        AppThrottleModule.forRoot(),
+        AppIdempotencyModule.forRoot(),
         NotificationsModule.forRoot({ publisher: 'socket' }),
         // Announces; does not consume. A web process that started consuming to
         // send a message would be a surprise.
