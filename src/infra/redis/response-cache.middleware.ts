@@ -1,5 +1,6 @@
 import { Logger } from '@dunx/core';
 import {
+  conditionalGet,
   type Middleware,
   type Next,
   type RouteContext,
@@ -17,6 +18,8 @@ interface CachedResponse {
   readonly status: number;
   readonly contentType: string;
   readonly body: string;
+  /** The tag `etag: true` put on the miss, replayed so a hit still earns a 304. */
+  readonly etag?: string;
 }
 
 /**
@@ -67,10 +70,15 @@ export class ResponseCacheMiddleware implements Middleware {
     if (key === undefined) return next();
     const hit = await this.#read(key);
     if (hit !== undefined) {
-      return new Response(hit.body, {
-        status: hit.status,
-        headers: { 'content-type': hit.contentType, 'x-cache': 'HIT' },
+      const headers = new Headers({
+        'content-type': hit.contentType,
+        'x-cache': 'HIT',
       });
+      if (hit.etag !== undefined) headers.set('etag', hit.etag);
+      return conditionalGet(
+        new Response(hit.body, { status: hit.status, headers }),
+        req,
+      );
     }
 
     const response = await next();
@@ -85,7 +93,9 @@ export class ResponseCacheMiddleware implements Middleware {
      */
     const copy = response.clone();
     const body = await copy.text();
+    const etag = response.headers.get('etag');
     await this.#write(key, {
+      ...(etag === null ? {} : { etag }),
       status: response.status,
       contentType:
         response.headers.get('content-type') ??

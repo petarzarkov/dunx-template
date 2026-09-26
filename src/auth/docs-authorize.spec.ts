@@ -9,6 +9,7 @@ import { AccountsModule } from './auth.module.js';
 import { validateConfig } from '../config/env.validation.js';
 import { AppConfigService } from '../config/app.config.service.js';
 import { httpOptions } from '../http.options.js';
+import { ReferenceMiddleware } from '../core/middlewares/reference.middleware.js';
 import { docsAuthorize } from './docs-authorize.js';
 
 /**
@@ -76,6 +77,7 @@ beforeAll(async () => {
     { ...httpOptions(config), requestLogging: false },
   );
   app.setGlobalPrefix('api');
+  app.use(ReferenceMiddleware);
   base = await app.listen(0);
 
   // A real session, taken the way any browser would: better-auth's own endpoint
@@ -139,5 +141,31 @@ describe('the documentation gate outside local', () => {
     // There is no server-side POST handler any more, so the form has to name
     // the real endpoint. A stale path here is a form that silently never works.
     expect(body).toContain('/api/auth/sign-in/email');
+  });
+
+  /**
+   * `securityHeaders` sends a strict CSP that blocks inline scripts, and both
+   * of these pages run one. Each sends a policy admitting its own script by
+   * hash, which the app's policy leaves in place.
+   */
+  test('the form admits its own inline script and no other', async () => {
+    const response = await get('api/docs');
+    const script = /<script type="module">([\s\S]*?)<\/script>/.exec(
+      await response.text(),
+    )?.[1];
+    const hash = new Bun.CryptoHasher('sha256')
+      .update(script ?? '')
+      .digest('base64');
+    const policy = response.headers.get('content-security-policy');
+    expect(policy).toContain(`'sha256-${hash}'`);
+    expect(policy).not.toContain('unsafe-inline');
+  });
+
+  test('the Scalar page sends its own policy over the strict one', async () => {
+    const response = await get('api/public', { cookie });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-security-policy')).toContain(
+      "'sha256-",
+    );
   });
 });

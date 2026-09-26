@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Idempotent,
   Post,
   Public,
   Roles,
@@ -50,6 +51,8 @@ export class InvitesController {
    * first thing anyone building against it hits is their own rate limit.
    */
   @ThrottleUnlessLocal({ limit: 10, windowSeconds: 600 })
+  // A retried send with the same `Idempotency-Key` does not mail twice.
+  @Idempotent()
   @ApiDoc({ tags: ['invites'], summary: 'Invite an address' })
   @Roles(UserRole.ADMIN)
   @Post('/', createInvite)

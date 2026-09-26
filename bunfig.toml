@@ -1,7 +1,9 @@
 # The one line that makes constructor injection work. @dunx/transform records each
 # class's constructor parameter types at load time so the container can resolve
 # them. Without it, boot fails naming the provider it could not build.
-preload = ["@dunx/transform/preload"]
+# otel.preload.ts registers an OpenTelemetry SDK when OTEL_EXPORTER_OTLP_ENDPOINT
+# is set, and nothing otherwise.
+preload = ["@dunx/transform/preload", "./src/otel.preload.ts"]
 
 [test]
 root = "./src"

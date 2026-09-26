@@ -4,6 +4,7 @@ import {
   Get,
   HttpError,
   HttpStatusCode,
+  Idempotent,
   Patch,
   Post,
   Roles,
@@ -52,6 +53,11 @@ export class UsersController {
     return this.users.findById(input.params.userId);
   }
 
+  /**
+   * A retry carrying the same `Idempotency-Key` replays the first response
+   * instead of answering 409 on the address the first attempt already took.
+   */
+  @Idempotent()
   @ApiDoc({ tags: ['users'], summary: 'Create a user' })
   @Roles(UserRole.ADMIN)
   @Post('/', createUser)

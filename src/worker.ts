@@ -2,6 +2,7 @@ import { Logger } from '@dunx/core';
 import { WorkerFactory } from '@dunx/infra/queue';
 import { WorkerModule } from './app.module.js';
 import { forceExitAfter } from './core/force-exit.js';
+import { flushTraces } from './otel.preload.js';
 
 /**
  * `bun run worker` - the consuming half, and **a second process on purpose**.
@@ -38,5 +39,7 @@ logger.info('worker consuming', { queues: worker.queues });
 // An in-flight job is drained by the shutdown hooks before this resolves.
 await worker.closed;
 
+// Inside the watchdog, so a collector that never answers cannot hold the exit.
+await flushTraces();
 cancelWatchdog();
 process.exit(0);

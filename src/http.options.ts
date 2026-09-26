@@ -8,6 +8,12 @@ import { errorMapper } from './core/errors/error-mapper.js';
 import { AuditContextMiddleware } from './core/middlewares/audit-context.middleware.js';
 import { ResponseCacheMiddleware } from './infra/redis/response-cache.middleware.js';
 
+/** `csrf` takes a bare origin, so a configured `https://app.example/` is normalized. */
+const trustedOrigins = (origin: string): string[] => {
+  const parsed = URL.parse(origin)?.origin;
+  return parsed === undefined || parsed === 'null' ? [] : [parsed];
+};
+
 /**
  * The `HttpOptions` in one place, because they have to be passed to
  * `HttpFactory.create` **and** to `@dunx/testing`'s `createTestServer` -
@@ -72,6 +78,30 @@ export const httpOptions = (config: AppConfig): HttpOptions => {
      * without this its stats panel has nothing in it.
      */
     metrics: true,
+    /**
+     * `nosniff`, `DENY` framing, `no-referrer` and HSTS on every response, the
+     * 404 and mapped errors included. The CSP is off unless asked for, and this
+     * asks for the strict one: same-origin scripts and styles only. The chat
+     * page at `/` keeps both in `public/` so it needs no exception, and Swagger,
+     * Scalar and the dashboard send a policy of their own, which wins.
+     */
+    securityHeaders: { contentSecurityPolicy: true },
+    /**
+     * A cross-site `POST`, `PATCH` or `DELETE` from a browser is refused with a
+     * 403, judged from `Sec-Fetch-Site` and `Origin`, with no token to thread
+     * through a form. better-auth's cookie session is what makes this matter. A
+     * non-browser client sends neither header and is unaffected. The configured
+     * CORS origin is trusted, since it is the one other site allowed to call with
+     * credentials; `*` trusts none.
+     */
+    csrf: { trustedOrigins: trustedOrigins(config.cors.origin) },
+    /**
+     * A weak `ETag` on every value a `GET` handler returns, and a 304 with no
+     * body when `If-None-Match` already has it. A handler returning its own
+     * `Response` is compared only against an `ETag` it set itself, and a hit
+     * `ResponseCacheMiddleware` serves never reaches a handler, so is untagged.
+     */
+    etag: true,
     notFound: 'public',
     requestLogging: {
       requestBody: config.log.requestBody,
