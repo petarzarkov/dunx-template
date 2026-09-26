@@ -12,6 +12,7 @@ import { AppConfigService } from './config/app.config.service.js';
 import { validateConfig } from './config/env.validation.js';
 import { httpOptions } from './http.options.js';
 import { forceExitAfter } from './core/force-exit.js';
+import { flushTraces } from './otel.preload.js';
 import { HomeMiddleware } from './core/middlewares/home.middleware.js';
 import { ReferenceMiddleware } from './core/middlewares/reference.middleware.js';
 import { HEALTH_ROUTES } from './constants.js';
@@ -192,5 +193,7 @@ await app.closed;
 
 // Every shutdown hook has run, so leaving is correct - and explicit, because a
 // connection that never opened can still be holding the loop. See force-exit.ts.
+// Inside the watchdog, so a collector that never answers cannot hold the exit.
+await flushTraces();
 cancelWatchdog();
 process.exit(0);

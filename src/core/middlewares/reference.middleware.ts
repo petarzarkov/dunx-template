@@ -1,6 +1,7 @@
 import type { BunRequest } from 'bun';
 import {
   gate,
+  inlineScriptPolicy,
   type Authorize,
   type Middleware,
   type Next,
@@ -36,6 +37,7 @@ export class ReferenceMiddleware implements Middleware {
   readonly #jsonHref: string;
   readonly #authorize: Authorize | undefined;
   #page: Promise<string> | undefined;
+  #policy: string | undefined;
 
   constructor(
     private readonly explorer: OpenApiExplorer,
@@ -80,8 +82,15 @@ export class ReferenceMiddleware implements Middleware {
     if (refused !== undefined) return refused;
 
     if (pathname === this.#mount) {
-      return new Response(await this.#html(), {
-        headers: { 'content-type': 'text/html; charset=utf-8' },
+      const html = await this.#html();
+      // Its own policy, as `OpenApiModule`'s page sends, so the app's strict
+      // CSP does not blank the page's inline boot script.
+      this.#policy ??= inlineScriptPolicy(html);
+      return new Response(html, {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+          'content-security-policy': this.#policy,
+        },
       });
     }
     return this.#renderer.asset(pathname.slice(this.#mount.length + 1));

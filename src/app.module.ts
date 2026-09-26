@@ -1,6 +1,7 @@
 import type { ConfigSource, DynamicModule, ModuleRef } from '@dunx/core';
 import { StaticModule } from '@dunx/http';
 import { EventBusModule } from '@dunx/core';
+import { OtelModule } from '@dunx/core/otel';
 import { LoggerModule } from '@dunx/infra/logger';
 import { ScheduleModule } from '@dunx/infra/schedule';
 import { AccountsModule } from './auth/auth.module.js';
@@ -13,6 +14,7 @@ import { FilesFeatureModule } from './files/files.module.js';
 import { AppDashboardModule } from './infra/dashboard/dashboard.module.js';
 import { AppCacheModule } from './infra/cache/cache.module.js';
 import { AppThrottleModule } from './infra/throttle/throttle.module.js';
+import { AppIdempotencyModule } from './infra/idempotency/idempotency.module.js';
 import { DatabaseModule } from './infra/db/database.module.js';
 import { StorageModule } from './infra/files/storage.module.js';
 import { AppHealthModule } from './infra/health/health.module.js';
@@ -84,12 +86,18 @@ const foundation = (options: AppModuleOptions): readonly ModuleRef[] => [
    * buses and a publisher would reach half its subscribers.
    */
   EventBusModule,
+  /**
+   * Binds `Tracer`, so the HTTP server and client, database queries, Redis
+   * commands, bullmq jobs and AMQP messages open real spans, and each log line
+   * carries the id of the span it was written in. Records nothing until
+   * `otel.preload.ts` registers an SDK, which it does only when
+   * `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+   */
+  OtelModule,
   DatabaseModule.forRoot(),
   RedisCacheModule.forRoot(),
   // After Redis: the L2 store is built over that connection.
   AppCacheModule.forRoot(),
-  // After the cache: it reuses that store's reachability probe to pick a counter.
-  AppThrottleModule.forRoot(),
   StorageModule.forRoot(),
   ImagesConfigModule.forRoot(),
 ];
@@ -149,6 +157,14 @@ export class AppModule {
         }),
         // After DatabaseModule, so better-auth reuses the connection it opened.
         AccountsModule,
+        /**
+         * Web process only, and after `AccountsModule`: both read the caller off
+         * `CurrentUser` and pick a store from the cache's probe. In the shared
+         * foundation they pulled `AccountsModule` into the worker too, whose
+         * `AuthAdminSeeder` then raced this process's to insert the same admin.
+         */
+        AppThrottleModule.forRoot(),
+        AppIdempotencyModule.forRoot(),
         NotificationsModule.forRoot({ publisher: 'socket' }),
         // Announces; does not consume. A web process that started consuming to
         // send a message would be a surprise.

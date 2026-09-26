@@ -107,6 +107,25 @@ describe('the response cache in production', () => {
     expect(await second.text()).toBe(await first.text());
   });
 
+  test.skipIf(!cacheUp)(
+    'a hit keeps the ETag and still answers If-None-Match with a 304',
+    async () => {
+      const warm = await server.request('api/profile', {
+        headers: bearer(oneToken),
+      });
+      const etag = warm.headers.get('etag');
+      expect(etag).toStartWith('W/"');
+
+      const again = await server.request('api/profile', {
+        headers: { ...bearer(oneToken), 'if-none-match': etag ?? '' },
+      });
+      expect(again.headers.get('x-cache')).toBe('HIT');
+      expect(again.status).toBe(304);
+      expect(again.headers.get('etag')).toBe(etag);
+      expect(await again.text()).toBe('');
+    },
+  );
+
   /**
    * The one that matters. `/api/profile` returns the caller, so a shared key
    * would hand one account's identity to the next - which is why the caller is

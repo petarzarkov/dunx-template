@@ -17,6 +17,11 @@ process, **object storage** on local disk or S3, **image** processing on
 them on, **cron** schedules, an **ops dashboard** with the real Bull Board on it,
 an outbound HTTP client with retries, and **Redis** caching and rate limiting.
 
+Every response carries security headers and a strict CSP, a cross-site browser
+write is refused, `GET` values are tagged for a 304, the two creates honour an
+`Idempotency-Key`, and **OpenTelemetry** spans are exported when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+
 **None of it is required to be running.** An area whose service is absent reports
 that it is skipping and the app boots anyway: `bun run start`, `bun test` and
 `bun run test:e2e` all pass with nothing installed, and exercise the real thing
@@ -131,7 +136,9 @@ changes.
 src/
   main.ts                    bootstrap: create, configure, listen
   worker.ts                  the queue consumer, a container with no server
-  http.options.ts            the HttpOptions, shared with the test suites
+  http.options.ts            the HttpOptions, shared with the test suites: middleware,
+                             security headers, CSRF and ETags
+  otel.preload.ts            registers an OpenTelemetry SDK when an endpoint is set
   app.module.ts              both graphs: AppModule.forRoot() and WorkerModule.forRoot()
   constants.ts               route segments and the websocket path
   config/                    zod env schemas, validateConfig, AppConfigService
@@ -154,6 +161,7 @@ src/
     files/                   StorageModule: local disk or S3, selected by config
     images/                  ImagesModule over Bun.Image
     health/                  liveness, readiness per area, build info
+    idempotency/             IdempotencyModule for @Idempotent(), Redis or memory store
   users/                     controller, service, repository, schema, DTOs
     invites/                 invite an address, redeem the code on a public route
   files/                     upload, download, presign, thumbnails, the media job

@@ -1,5 +1,5 @@
 import { Auth } from '@dunx/auth';
-import { HttpStatusCode, type Authorize } from '@dunx/http';
+import { HttpStatusCode, inlineScriptPolicy, type Authorize } from '@dunx/http';
 import { AppEnv } from '../config/dto/service-vars.dto.js';
 import { authBasePath } from './auth.options.js';
 
@@ -29,6 +29,14 @@ export const docsAuthorize = (
   // developer stop reading the docs.
   if (env === AppEnv.LOCAL) return undefined;
 
+  const page = loginPage(authBasePath(prefix));
+  /**
+   * The app's strict CSP would block the form's inline script, so the page
+   * sends its own: that script's hash and nothing else. Computed once, since it
+   * parses the document.
+   */
+  const policy = inlineScriptPolicy(page);
+
   return async (req) => {
     const session = await auth.api.getSession({ headers: req.headers });
     if (session !== null) return true;
@@ -39,7 +47,13 @@ export const docsAuthorize = (
      * cookie and no way to send a bearer token, so the bare 404 an ops page
      * wants is a dead end here.
      */
-    return loginForm(authBasePath(prefix));
+    return new Response(page, {
+      status: HttpStatusCode.UNAUTHORIZED,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': policy,
+      },
+    });
   };
 };
 
@@ -56,9 +70,7 @@ export const docsAuthorize = (
  * `/api/api/auth/sign-in/email`, which fails silently in a page nothing tests
  * by hand.
  */
-const loginForm = (authPath: string): Response =>
-  new Response(
-    `<!doctype html>
+const loginPage = (authPath: string): string => `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -109,9 +121,4 @@ const loginForm = (authPath: string): Response =>
       };
     </script>
   </body>
-</html>`,
-    {
-      status: HttpStatusCode.UNAUTHORIZED,
-      headers: { 'content-type': 'text/html; charset=utf-8' },
-    },
-  );
+</html>`;
